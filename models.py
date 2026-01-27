@@ -1,11 +1,15 @@
 # coding=utf-8
 # Qwen3-TTS Model Loader
 
+import time
 import torch
 from typing import Optional, Dict
 from qwen_tts import Qwen3TTSModel
 
 import config
+
+# Warmup settings
+WARMUP_TEXT = "안녕하세요."
 
 
 class TTSModelManager:
@@ -54,7 +58,43 @@ class TTSModelManager:
 
         self.models[model_type] = model
         print(f"Model {model_type} loaded successfully!")
+
+        # Warmup to trigger JIT compilation
+        if config.USE_WARMUP and config.USE_TORCH_COMPILE:
+            self._warmup_model(model, model_type)
+
         return model
+
+    def _warmup_model(self, model: Qwen3TTSModel, model_type: str):
+        """Run warmup inference to trigger JIT compilation."""
+        print(f"Warming up {model_type}...")
+        try:
+            t0 = time.time()
+            # Determine which method to use based on model type
+            if "base" in model_type:
+                # For base models, use a simple reference audio warmup
+                # Just run a minimal generation to trigger compilation
+                model.generate_voice_clone(
+                    text=WARMUP_TEXT,
+                    language="Korean",
+                    ref_audio="c:/Qwen3-TTS/sample(1).mp3",
+                    ref_text="안녕하세요.",
+                    x_vector_only_mode=True,
+                    max_new_tokens=256,
+                )
+            else:
+                # For custom_voice models
+                model.generate_custom_voice(
+                    text=WARMUP_TEXT,
+                    language="Korean",
+                    speaker="Sohee",
+                    max_new_tokens=256,
+                )
+            torch.cuda.synchronize()
+            t1 = time.time()
+            print(f"Warmup completed in {t1 - t0:.2f}s (subsequent inferences will be faster)")
+        except Exception as e:
+            print(f"Warmup failed (this is okay): {e}")
 
     def get_model(self, model_type: str) -> Qwen3TTSModel:
         """Get a loaded model or load it if not already loaded."""
