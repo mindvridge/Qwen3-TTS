@@ -10,9 +10,9 @@ PORT = int(os.getenv("TTS_PORT", "8000"))
 
 # Model settings
 DEVICE = os.getenv("TTS_DEVICE", "cuda:0")
-DTYPE = os.getenv("TTS_DTYPE", "float16")  # bfloat16, float16, float32
+DTYPE = os.getenv("TTS_DTYPE", "bfloat16")  # bfloat16, float16, float32
 USE_FLASH_ATTENTION = os.getenv("TTS_USE_FLASH_ATTENTION", "false").lower() == "true"
-USE_TORCH_COMPILE = os.getenv("TTS_USE_TORCH_COMPILE", "false").lower() == "true"  # Disabled - causes CUDA errors with some configurations
+USE_TORCH_COMPILE = os.getenv("TTS_USE_TORCH_COMPILE", "false").lower() == "true"  # Disabled - causes CUDA errors
 USE_WARMUP = os.getenv("TTS_USE_WARMUP", "false").lower() == "true"  # Disabled by default due to torch.compile compatibility
 
 # Model paths - 1.7B models (higher quality, slower)
