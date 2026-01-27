@@ -43,6 +43,15 @@ class TTSModelManager:
             attn_implementation=self.attn_impl,
         )
 
+        # Apply torch.compile() for faster inference
+        if config.USE_TORCH_COMPILE:
+            print(f"Applying torch.compile() to {model_type}...")
+            try:
+                model.model = torch.compile(model.model, mode="reduce-overhead")
+                print(f"torch.compile() applied successfully!")
+            except Exception as e:
+                print(f"torch.compile() failed: {e}")
+
         self.models[model_type] = model
         print(f"Model {model_type} loaded successfully!")
         return model
