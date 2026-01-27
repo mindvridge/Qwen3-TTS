@@ -408,13 +408,15 @@
             selectVoice(name);
         }
 
-        function showResult(elementId, status, message, audioUrl = null) {
+        function showResult(elementId, status, message, audioUrl = null, genTime = null) {
             const el = document.getElementById(elementId);
-            let html = `<div class="status ${status}">${message}</div>`;
+            let timeInfo = genTime ? ` (${genTime}s)` : '';
+            let html = `<div class="status ${status}">${message}${timeInfo}</div>`;
             if (audioUrl) {
                 html += `
                     <div class="audio-player">
                         <strong>Generated Audio:</strong>
+                        ${genTime ? `<span style="color:#00d4ff;margin-left:10px;">생성 시간: ${genTime}초</span>` : ''}
                         <audio controls src="${audioUrl}"></audio>
                         <br><br>
                         <a href="${audioUrl}" download="output.wav" class="btn" style="display:inline-block;text-decoration:none;margin-top:10px;">Download</a>
@@ -453,9 +455,10 @@
 
                 if (!res.ok) throw new Error('Generation failed');
 
+                const genTime = res.headers.get('X-Generation-Time');
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
-                showResult('tts-result', 'success', `${selectedVoice} 음성 생성 완료!`, url);
+                showResult('tts-result', 'success', `${selectedVoice} 음성 생성 완료!`, url, genTime);
             } catch (e) {
                 showResult('tts-result', 'error', `Error: ${e.message}`);
             }

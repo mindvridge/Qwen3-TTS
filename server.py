@@ -93,7 +93,7 @@ def audio_to_base64(wav: np.ndarray, sample_rate: int) -> str:
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
-def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool = False):
+def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool = False, generation_time: float = 0.0):
     """Create response with audio data."""
     if single and len(wavs) == 1:
         # Return single WAV file directly
@@ -103,7 +103,11 @@ def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool =
         return StreamingResponse(
             buffer,
             media_type="audio/wav",
-            headers={"Content-Disposition": "attachment; filename=output.wav"}
+            headers={
+                "Content-Disposition": "attachment; filename=output.wav",
+                "X-Generation-Time": f"{generation_time:.3f}",
+                "Access-Control-Expose-Headers": "X-Generation-Time"
+            }
         )
     else:
         # Return JSON with base64 encoded audio
@@ -114,6 +118,7 @@ def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool =
             "sample_rate": sample_rate,
             "audio_count": len(wavs),
             "audio_data": audio_data,
+            "generation_time": generation_time,
         })
 
 
@@ -186,10 +191,11 @@ async def generate_custom_voice(request: CustomVoiceRequest, model_size: str = "
 
         torch.cuda.synchronize()
         t1 = time.time()
-        print(f"[CustomVoice] Generated in {t1 - t0:.3f}s")
+        gen_time = t1 - t0
+        print(f"[CustomVoice] Generated in {gen_time:.3f}s")
 
         single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single)
+        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -218,10 +224,11 @@ async def generate_voice_design(request: VoiceDesignRequest):
 
         torch.cuda.synchronize()
         t1 = time.time()
-        print(f"[VoiceDesign] Generated in {t1 - t0:.3f}s")
+        gen_time = t1 - t0
+        print(f"[VoiceDesign] Generated in {gen_time:.3f}s")
 
         single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single)
+        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -254,10 +261,11 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
 
         torch.cuda.synchronize()
         t1 = time.time()
-        print(f"[VoiceClone] Generated in {t1 - t0:.3f}s")
+        gen_time = t1 - t0
+        print(f"[VoiceClone] Generated in {gen_time:.3f}s")
 
         single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single)
+        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
