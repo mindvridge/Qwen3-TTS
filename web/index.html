@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen3-TTS Test</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #00d4ff;
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 12px 24px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .tab:hover, .tab.active {
+            background: #00d4ff;
+            color: #1a1a2e;
+        }
+        .panel {
+            display: none;
+            background: rgba(255,255,255,0.05);
+            padding: 30px;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+        }
+        .panel.active {
+            display: block;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #00d4ff;
+            font-weight: 500;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            font-size: 16px;
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .btn {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            border: none;
+            border-radius: 8px;
+            color: #1a1a2e;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,212,255,0.3);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .audio-player {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+        }
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .status {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .status.loading {
+            background: rgba(255,193,7,0.2);
+            color: #ffc107;
+        }
+        .status.success {
+            background: rgba(40,167,69,0.2);
+            color: #28a745;
+        }
+        .status.error {
+            background: rgba(220,53,69,0.2);
+            color: #dc3545;
+        }
+        .info-box {
+            background: rgba(0,212,255,0.1);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00d4ff;
+        }
+        .server-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .server-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #dc3545;
+        }
+        .status-dot.online {
+            background: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Qwen3-TTS Test</h1>
+
+        <div class="server-info">
+            <div class="server-status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="serverStatus">Checking...</span>
+            </div>
+            <div>
+                <span id="loadedModels"></span>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('tts')">TTS</button>
+            <button class="tab" onclick="showTab('clone')">Voice Clone</button>
+            <button class="tab" onclick="showTab('design')">Voice Design</button>
+        </div>
+
+        <!-- TTS Panel -->
+        <div class="panel active" id="tts-panel">
+            <div class="info-box">
+                텍스트를 음성으로 변환합니다. 다양한 스피커와 감정을 선택할 수 있습니다.
+            </div>
+
+            <div class="form-group">
+                <label>텍스트</label>
+                <textarea id="tts-text" placeholder="변환할 텍스트를 입력하세요...">안녕하세요, Qwen3 TTS 시스템 테스트입니다.</textarea>
+            </div>
+
+            <div class="row">
+                <div class="form-group">
+                    <label>스피커</label>
+                    <select id="tts-speaker">
+                        <option value="Sohee">Sohee (한국어)</option>
+                        <option value="Vivian">Vivian (중국어)</option>
+                        <option value="Serena">Serena (중국어)</option>
+                        <option value="Ryan">Ryan (영어)</option>
+                        <option value="Aiden">Aiden (영어)</option>
+                        <option value="Ono_Anna">Ono_Anna (일본어)</option>
+                        <option value="Uncle_Fu">Uncle_Fu (중국어)</option>
+                        <option value="Dylan">Dylan (북경방언)</option>
+                        <option value="Eric">Eric (사천방언)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>언어</label>
+                    <select id="tts-language">
+                        <option value="Korean">Korean</option>
+                        <option value="Auto">Auto</option>
+                        <option value="Chinese">Chinese</option>
+                        <option value="English">English</option>
+                        <option value="Japanese">Japanese</option>
+                        <option value="German">German</option>
+                        <option value="French">French</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="form-group">
+                    <label>모델 크기</label>
+                    <select id="tts-model">
+                        <option value="0.6b">0.6B (빠름)</option>
+                        <option value="1.7b">1.7B (고품질)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>감정/톤 (선택사항)</label>
+                    <input type="text" id="tts-instruct" placeholder="예: 행복하게, 슬프게, 화난 목소리로">
+                </div>
+            </div>
+
+            <button class="btn" onclick="generateTTS()">음성 생성</button>
+
+            <div id="tts-result"></div>
+        </div>
+
+        <!-- Voice Clone Panel -->
+        <div class="panel" id="clone-panel">
+            <div class="info-box">
+                참조 음성 파일을 사용하여 음성을 복제합니다. 참조 음성의 대사를 입력하면 더 좋은 품질을 얻을 수 있습니다.
+            </div>
+
+            <div class="form-group">
+                <label>합성할 텍스트</label>
+                <textarea id="clone-text" placeholder="복제된 음성으로 말할 텍스트...">안녕하세요, 복제된 음성으로 말하고 있습니다.</textarea>
+            </div>
+
+            <div class="form-group">
+                <label>참조 음성 파일 경로</label>
+                <input type="text" id="clone-ref-audio" placeholder="c:/path/to/audio.mp3 또는 URL" value="c:/Qwen3-TTS/sample(1).mp3">
+            </div>
+
+            <div class="form-group">
+                <label>참조 음성 대사 (선택사항)</label>
+                <textarea id="clone-ref-text" placeholder="참조 음성 파일의 정확한 대사...">안녕하세요. 오늘 저의 면접에 참석해 주셔서 감사합니다. 저는 박현준 팀장입니다.</textarea>
+            </div>
+
+            <div class="row">
+                <div class="form-group">
+                    <label>언어</label>
+                    <select id="clone-language">
+                        <option value="Korean">Korean</option>
+                        <option value="Auto">Auto</option>
+                        <option value="Chinese">Chinese</option>
+                        <option value="English">English</option>
+                        <option value="Japanese">Japanese</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>모델 크기</label>
+                    <select id="clone-model">
+                        <option value="0.6b">0.6B (빠름)</option>
+                        <option value="1.7b">1.7B (고품질)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button class="btn" onclick="generateClone()">음성 클론</button>
+
+            <div id="clone-result"></div>
+        </div>
+
+        <!-- Voice Design Panel -->
+        <div class="panel" id="design-panel">
+            <div class="info-box">
+                원하는 음성 특성을 자세히 설명하면 그에 맞는 음성을 생성합니다.
+            </div>
+
+            <div class="form-group">
+                <label>텍스트</label>
+                <textarea id="design-text" placeholder="변환할 텍스트...">안녕하세요, 음성 디자인 테스트입니다.</textarea>
+            </div>
+
+            <div class="form-group">
+                <label>음성 특성 설명</label>
+                <textarea id="design-instruct" placeholder="원하는 음성의 특성을 자세히 설명하세요...">따뜻하고 부드러운 여성 목소리, 약간 느린 속도로 또렷하게 발음</textarea>
+            </div>
+
+            <div class="form-group">
+                <label>언어</label>
+                <select id="design-language">
+                    <option value="Korean">Korean</option>
+                    <option value="Auto">Auto</option>
+                    <option value="Chinese">Chinese</option>
+                    <option value="English">English</option>
+                    <option value="Japanese">Japanese</option>
+                </select>
+            </div>
+
+            <button class="btn" onclick="generateDesign()">음성 생성</button>
+
+            <div id="design-result"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        // Check server status
+        async function checkServer() {
+            try {
+                const res = await fetch(`${API_BASE}/info`);
+                const data = await res.json();
+                document.getElementById('statusDot').classList.add('online');
+                document.getElementById('serverStatus').textContent = 'Online';
+                document.getElementById('loadedModels').textContent = `Models: ${data.loaded_models.join(', ')}`;
+            } catch (e) {
+                document.getElementById('statusDot').classList.remove('online');
+                document.getElementById('serverStatus').textContent = 'Offline';
+                document.getElementById('loadedModels').textContent = '';
+            }
+        }
+
+        function showTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.querySelector(`[onclick="showTab('${name}')"]`).classList.add('active');
+            document.getElementById(`${name}-panel`).classList.add('active');
+        }
+
+        function showResult(elementId, status, message, audioUrl = null) {
+            const el = document.getElementById(elementId);
+            let html = `<div class="status ${status}">${message}</div>`;
+            if (audioUrl) {
+                html += `
+                    <div class="audio-player">
+                        <strong>Generated Audio:</strong>
+                        <audio controls src="${audioUrl}"></audio>
+                        <br><br>
+                        <a href="${audioUrl}" download="output.wav" class="btn" style="display:inline-block;text-decoration:none;margin-top:10px;">Download</a>
+                    </div>
+                `;
+            }
+            el.innerHTML = html;
+        }
+
+        async function generateTTS() {
+            const text = document.getElementById('tts-text').value;
+            const speaker = document.getElementById('tts-speaker').value;
+            const language = document.getElementById('tts-language').value;
+            const model = document.getElementById('tts-model').value;
+            const instruct = document.getElementById('tts-instruct').value;
+
+            showResult('tts-result', 'loading', 'Generating...');
+
+            try {
+                const params = new URLSearchParams({
+                    text, speaker, language, model_size: model, instruct
+                });
+                const res = await fetch(`${API_BASE}/tts/speak?${params}`);
+
+                if (!res.ok) throw new Error('Generation failed');
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                showResult('tts-result', 'success', 'Generation complete!', url);
+            } catch (e) {
+                showResult('tts-result', 'error', `Error: ${e.message}`);
+            }
+        }
+
+        async function generateClone() {
+            const text = document.getElementById('clone-text').value;
+            const refAudio = document.getElementById('clone-ref-audio').value;
+            const refText = document.getElementById('clone-ref-text').value;
+            const language = document.getElementById('clone-language').value;
+            const model = document.getElementById('clone-model').value;
+
+            showResult('clone-result', 'loading', 'Cloning voice...');
+
+            try {
+                const res = await fetch(`${API_BASE}/tts/voice_clone?model_size=${model}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text,
+                        language,
+                        ref_audio: refAudio,
+                        ref_text: refText,
+                        x_vector_only_mode: refText.trim() === ''
+                    })
+                });
+
+                if (!res.ok) throw new Error('Clone failed');
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                showResult('clone-result', 'success', 'Voice clone complete!', url);
+            } catch (e) {
+                showResult('clone-result', 'error', `Error: ${e.message}`);
+            }
+        }
+
+        async function generateDesign() {
+            const text = document.getElementById('design-text').value;
+            const instruct = document.getElementById('design-instruct').value;
+            const language = document.getElementById('design-language').value;
+
+            showResult('design-result', 'loading', 'Designing voice...');
+
+            try {
+                const res = await fetch(`${API_BASE}/tts/voice_design`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, language, instruct })
+                });
+
+                if (!res.ok) throw new Error('Design failed');
+
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                showResult('design-result', 'success', 'Voice design complete!', url);
+            } catch (e) {
+                showResult('design-result', 'error', `Error: ${e.message}`);
+            }
+        }
+
+        // Initial check
+        checkServer();
+        setInterval(checkServer, 10000);
+    </script>
+</body>
+</html>

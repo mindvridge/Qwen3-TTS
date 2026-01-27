@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Models (too large for git)
+models/
+
+# Output files
+*.wav
+*.mp3
+
+# Temp files
+*.tmp
+*.log
+clone_request.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# Empty cloned repo
+Qwen3-TTS/

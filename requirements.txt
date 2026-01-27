@@ -1,0 +1,15 @@
+# Qwen3-TTS Server Dependencies
+qwen-tts>=0.0.4
+transformers==4.57.3
+accelerate==1.12.0
+torch>=2.0.0
+soundfile
+numpy
+
+# API Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Optional: Flash Attention 2 (install separately)
+# pip install -U flash-attn --no-build-isolation
