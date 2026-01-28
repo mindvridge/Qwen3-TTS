@@ -61,19 +61,28 @@ TTS + 립싱크 영상 생성이 필요한 경우에만 설치:
 # 비디오 생성 의존성 설치
 pip install -r requirements-video.txt
 
-# NewAvata 클론
-git clone https://github.com/mindvridge/NewAvata.git
+# MuseTalk 클론 및 설정
+mkdir -p NewAvata
+git clone https://github.com/TMElyralab/MuseTalk.git NewAvata/MuseTalk
+cd NewAvata/MuseTalk
+
+# MuseTalk 모델 다운로드 (Hugging Face에서 자동 다운로드)
+python scripts/download_models.py
+cd ../..
 
 # .env에 비디오 기능 활성화
+cp .env.example .env
 echo "ENABLE_VIDEO=true" >> .env
-echo "NEWAVATA_PATH=NewAvata" >> .env
 
 # 아바타 이미지 디렉토리 생성
 mkdir -p avatars
-# 아바타 이미지를 avatars/ 폴더에 업로드
+# 아바타 이미지(JPG/PNG)를 avatars/ 폴더에 업로드
 ```
 
-**Note**: 비디오 생성은 **A100 80GB** 권장 (TTS 8GB + 립싱크 15GB 메모리 사용)
+**리소스 요구사항:**
+- GPU: **A100 80GB** 권장
+- 메모리: ~25GB VRAM (TTS 8GB + MuseTalk 15GB)
+- 디스크: ~20GB (모델 파일)
 
 ---
 

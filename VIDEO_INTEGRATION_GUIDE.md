@@ -2,9 +2,14 @@
 
 ## 개요
 
-Qwen3-TTS 서버는 **선택적 비디오 생성 기능**을 제공합니다:
+Qwen3-TTS 서버는 **MuseTalk 기반 선택적 비디오 생성 기능**을 제공합니다:
 - **TTS만**: 음성 생성 API (기본)
-- **TTS + 비디오**: 음성 + 립싱크 영상 생성 (확장)
+- **TTS + 비디오**: 음성 + MuseTalk 립싱크 영상 생성 (확장)
+
+**기술 스택:**
+- TTS: Qwen3-TTS (0.6B/1.7B)
+- 립싱크: MuseTalk (TMElyralab/MuseTalk)
+- 통합: FastAPI REST API
 
 ---
 
@@ -56,8 +61,12 @@ pip install -U flash-attn --no-build-isolation
 # 2. 비디오 의존성 설치
 pip install -r requirements-video.txt
 
-# 3. NewAvata 클론
-git clone https://github.com/mindvridge/NewAvata.git
+# 3. MuseTalk 클론 및 모델 다운로드
+mkdir -p NewAvata
+git clone https://github.com/TMElyralab/MuseTalk.git NewAvata/MuseTalk
+cd NewAvata/MuseTalk
+python scripts/download_models.py
+cd ../..
 
 # 4. .env 설정
 cp .env.example .env
@@ -145,30 +154,38 @@ curl http://localhost:8000/video/avatars
 
 ---
 
-## NewAvata 통합 구현
+## MuseTalk 통합 구현
 
-### video_generator.py 수정 필요
+### video_generator.py - 구현 완료 ✅
 
-현재 `video_generator.py`는 **NewAvata API 호출 부분이 플레이스홀더**로 되어 있습니다.
-NewAvata 저장소의 실제 API에 맞게 구현이 필요합니다:
+`video_generator.py`는 **MuseTalk API를 사용하여 완전히 구현**되었습니다:
 
+**주요 기능:**
+1. **모델 로딩** - MuseTalk VAE, UNet, PE 모델 (lazy loading)
+2. **오디오 처리** - Whisper 기반 오디오 피처 추출
+3. **립싱크 생성** - 25 FPS, 256×256 해상도
+4. **비디오 출력** - MP4 형식, 오디오 임베딩
+
+**사용하는 MuseTalk 모듈:**
 ```python
-# video_generator.py의 generate() 메서드에서
-
-# PLACEHOLDER 부분을 실제 NewAvata API로 교체:
-from newavata import inference  # NewAvata의 실제 모듈 import
-
-video_path = inference.generate_video(
-    audio_path=audio_temp_path,
-    image_path=str(avatar_image_path),
-    output_path=output_path or tempfile.mktemp(suffix='.mp4')
-)
+from musetalk.utils.utils import load_all_model
+from musetalk.inference import inference
 ```
 
-**NewAvata 저장소 확인 필요:**
-1. NewAvata의 주요 추론 함수 확인
-2. 필요한 파라미터 확인 (fps, 해상도 등)
-3. 모델 파일 다운로드 경로 확인
+**생성 파라미터:**
+- `bbox_shift=0` - 바운딩 박스 조정
+- `extra_margin=10` - 턱 움직임 범위
+- `parsing_mode="jaw"` - 턱 중심 파싱 모드
+
+**모델 다운로드:**
+```bash
+cd NewAvata/MuseTalk
+python scripts/download_models.py
+# Hugging Face에서 자동 다운로드:
+# - musetalk.pth (~3GB)
+# - dwpose.pth (~200MB)
+# - 기타 모델 파일
+```
 
 ---
 
@@ -188,15 +205,18 @@ video_path = inference.generate_video(
 
 ## 문제 해결
 
-### 1. NewAvata를 찾을 수 없음
+### 1. MuseTalk를 찾을 수 없음
 ```
-FileNotFoundError: NewAvata not found at NewAvata
+FileNotFoundError: MuseTalk not found at NewAvata/MuseTalk
 ```
 
 **해결:**
 ```bash
-git clone https://github.com/mindvridge/NewAvata.git
-# .env에서 NEWAVATA_PATH 확인
+mkdir -p NewAvata
+git clone https://github.com/TMElyralab/MuseTalk.git NewAvata/MuseTalk
+cd NewAvata/MuseTalk
+python scripts/download_models.py
+# .env에서 NEWAVATA_PATH=NewAvata 확인
 ```
 
 ---
@@ -209,60 +229,114 @@ git clone https://github.com/mindvridge/NewAvata.git
 **원인:**
 - `ENABLE_VIDEO=false` (기본값)
 - requirements-video.txt 미설치
-- NewAvata 클론 안 함
+- MuseTalk 클론 안 함
 
 **해결:**
 ```bash
 # .env 확인
 cat .env | grep ENABLE_VIDEO
-# true로 설정되어야 함
+# ENABLE_VIDEO=true로 설정되어야 함
 
 # 의존성 설치
 pip install -r requirements-video.txt
 
-# NewAvata 확인
-ls NewAvata/
+# MuseTalk 확인
+ls NewAvata/MuseTalk/
 ```
 
 ---
 
-### 3. NotImplementedError: NewAvata integration not yet implemented
+### 3. MuseTalk 모델 파일을 찾을 수 없음
 
-**현재 상태:**
-`video_generator.py`의 NewAvata API 호출이 플레이스홀더입니다.
+```
+FileNotFoundError: Model file not found
+```
 
 **해결:**
-NewAvata 저장소에서 실제 API 확인 후 구현 필요:
+```bash
+cd NewAvata/MuseTalk
+python scripts/download_models.py
 
-1. NewAvata 저장소 README 확인
-2. `inference.py` 또는 `main.py`에서 추론 함수 찾기
-3. `video_generator.py`의 `generate()` 메서드 완성
+# 수동 다운로드 (필요 시)
+# Hugging Face에서 다운로드:
+# https://huggingface.co/TMElyralab/MuseTalk
+```
+
+---
+
+### 4. CUDA out of memory
+
+**원인:** TTS + MuseTalk 동시 실행 시 메모리 부족
+
+**해결:**
+```bash
+# A100 80GB 사용 (40GB로는 부족할 수 있음)
+# 또는 0.6B 모델 사용하여 TTS 메모리 절약
+echo "TTS_DEFAULT_MODEL=base_0.6b" >> .env
+```
 
 ---
 
 ## 다음 단계
 
-### 1. NewAvata 저장소 접근 확인
-- [ ] https://github.com/mindvridge/NewAvata가 public인지 확인
-- [ ] 로컬에 클론 가능한지 테스트
+### 1. 로컬 테스트 (Windows - 선택사항)
+- [ ] requirements-video.txt 설치
+- [ ] MuseTalk 클론 및 모델 다운로드
+- [ ] 아바타 이미지 준비
+- [ ] ENABLE_VIDEO=true로 설정
+- [ ] 로컬에서 비디오 생성 테스트
 
-### 2. NewAvata API 확인
-- [ ] NewAvata의 주요 추론 함수 식별
-- [ ] 필요한 모델 파일 다운로드
-- [ ] API 파라미터 확인
+### 2. A100 엘리스 AI 배포
 
-### 3. video_generator.py 완성
-- [ ] NewAvata API 호출 구현
-- [ ] 테스트 실행
+**옵션 A: TTS만 먼저 배포 (추천)**
+- [ ] VSCode (CUDA 12.4) 환경 선택
+- [ ] A100 40GB로 TTS 배포
+- [ ] 문장 분할 기능 테스트
+- [ ] 음성 품질 확인
 
-### 4. 엘리스 AI 배포
-- [ ] TTS만 먼저 배포 및 테스트
-- [ ] NewAvata 추가 및 비디오 기능 활성화
+**옵션 B: TTS + 비디오 통합 배포**
+- [ ] A100 80GB 환경 선택
+- [ ] TTS 설치 (requirements.txt)
+- [ ] MuseTalk 설치 (requirements-video.txt)
+- [ ] 모델 다운로드 (~20GB)
+- [ ] 아바타 이미지 업로드
+- [ ] ENABLE_VIDEO=true 설정
+- [ ] 비디오 생성 테스트
+
+### 3. 프로덕션 최적화 (선택사항)
+- [ ] TensorRT 최적화 (MuseTalk 2-4배 속도 향상)
+- [ ] 비디오 생성 캐싱
+- [ ] 비동기 처리 구현
 
 ---
 
 ## 참고 자료
 
-- Qwen3-TTS: https://github.com/QwenLM/Qwen3-TTS
-- NewAvata: https://github.com/mindvridge/NewAvata
-- 엘리스 배포 가이드: [ELICE_DEPLOYMENT_GUIDE.md](ELICE_DEPLOYMENT_GUIDE.md)
+- **Qwen3-TTS**: https://github.com/QwenLM/Qwen3-TTS
+- **MuseTalk**: https://github.com/TMElyralab/MuseTalk
+- **MuseTalk Hugging Face**: https://huggingface.co/TMElyralab/MuseTalk
+- **NewAvata (realtime-interview-avatar)**: https://github.com/mindvridge/NewAvata
+- **엘리스 배포 가이드**: [ELICE_DEPLOYMENT_GUIDE.md](ELICE_DEPLOYMENT_GUIDE.md)
+
+---
+
+## 요약
+
+✅ **완료된 작업:**
+- video_generator.py MuseTalk API 통합 완료
+- requirements-video.txt MuseTalk 의존성 정의
+- server.py /video/generate 엔드포인트 구현
+- .env.example 비디오 설정 추가
+- 문서 작성 (배포 가이드, 통합 가이드)
+
+📋 **사용 방법:**
+1. **TTS만**: `pip install -r requirements.txt` → `python server.py`
+2. **TTS + 비디오**: 추가로 `pip install -r requirements-video.txt` + MuseTalk 클론 + `ENABLE_VIDEO=true`
+
+🎯 **권장 배포 순서:**
+1. TTS만 먼저 A100 40GB에 배포하여 검증
+2. 검증 완료 후 A100 80GB로 업그레이드하고 비디오 기능 추가
+
+Sources:
+- [GitHub - TMElyralab/MuseTalk](https://github.com/TMElyralab/MuseTalk)
+- [MuseTalk/app.py at main](https://github.com/TMElyralab/MuseTalk/blob/main/app.py)

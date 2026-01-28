@@ -32,28 +32,44 @@ class VideoGenerator:
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Check if NewAvata is available
-        if not self.newavata_path.exists():
+        # Check if MuseTalk is available
+        musetalk_path = self.newavata_path / "MuseTalk"
+        if not musetalk_path.exists():
             raise FileNotFoundError(
-                f"NewAvata not found at {self.newavata_path}. "
+                f"MuseTalk not found at {musetalk_path}. "
                 f"Please clone it first:\n"
-                f"  git clone https://github.com/mindvridge/NewAvata {self.newavata_path}"
+                f"  git clone https://github.com/TMElyralab/MuseTalk.git {musetalk_path}\n"
+                f"  cd {musetalk_path}\n"
+                f"  python scripts/download_models.py"
             )
 
-        # Add NewAvata to Python path
-        sys.path.insert(0, str(self.newavata_path))
+        # Add MuseTalk to Python path
+        sys.path.insert(0, str(musetalk_path))
 
         try:
-            # Import NewAvata modules (adjust based on actual NewAvata structure)
-            # This is a placeholder - you'll need to adjust based on NewAvata's actual API
+            # Import MuseTalk modules
+            from musetalk.utils.utils import load_all_model
+            from musetalk.utils.preprocessing import get_landmark_and_bbox
+            from musetalk.utils.blending import get_image
+
+            self.musetalk = {
+                'load_all_model': load_all_model,
+                'get_landmark_and_bbox': get_landmark_and_bbox,
+                'get_image': get_image
+            }
+
+            # Load models (lazy loading - only when first inference)
+            self.models_loaded = False
             self.newavata_available = True
-            print(f"[VideoGenerator] NewAvata loaded from {self.newavata_path}")
+            print(f"[VideoGenerator] MuseTalk modules loaded from {musetalk_path}")
         except ImportError as e:
             self.newavata_available = False
             raise ImportError(
-                f"Failed to import NewAvata modules: {e}\n"
-                f"Make sure NewAvata dependencies are installed:\n"
-                f"  pip install -r requirements-video.txt"
+                f"Failed to import MuseTalk modules: {e}\n"
+                f"Make sure dependencies are installed:\n"
+                f"  pip install -r requirements-video.txt\n"
+                f"  cd {musetalk_path}\n"
+                f"  pip install -r requirements.txt"
             )
 
     def generate(
@@ -93,37 +109,85 @@ class VideoGenerator:
             audio_temp_path = audio_temp.name
             sf.write(audio_temp_path, audio_array, sr)
 
-        try:
-            # Generate video using NewAvata
-            # PLACEHOLDER: Replace with actual NewAvata API call
-            # Example (adjust based on actual NewAvata API):
-            # from newavata import generate_video
-            # video_path = generate_video(
-            #     audio_path=audio_temp_path,
-            #     image_path=str(avatar_image_path),
-            #     output_path=output_path or tempfile.mktemp(suffix='.mp4')
-            # )
+        # Prepare output path
+        if output_path is None:
+            video_output = tempfile.mktemp(suffix='.mp4')
+        else:
+            video_output = str(output_path)
 
-            print(f"[VideoGenerator] Generating video:")
+        try:
+            print(f"[VideoGenerator] Generating lip-sync video:")
             print(f"  Audio: {audio_temp_path}")
             print(f"  Avatar: {avatar_image_path}")
-            print(f"  Output: {output_path or 'memory'}")
+            print(f"  Output: {video_output}")
 
-            # For now, raise an error to indicate integration is needed
-            raise NotImplementedError(
-                "NewAvata integration not yet implemented. "
-                "Please implement the actual API call in video_generator.py"
-            )
+            # Load MuseTalk models (lazy loading)
+            if not self.models_loaded:
+                print(f"[VideoGenerator] Loading MuseTalk models (first time)...")
+                musetalk_path = self.newavata_path / "MuseTalk"
+                sys.path.insert(0, str(musetalk_path))
 
-            # Read generated video
-            # with open(video_path, 'rb') as f:
-            #     video_bytes = f.read()
+                from musetalk.utils.utils import load_all_model
+                from musetalk.utils.preprocessing import get_landmark_and_bbox, coord_placeholder
+                from musetalk.utils.blending import get_image
+                import torch
 
-            # Clean up temporary video if not saving
-            # if output_path is None:
-            #     os.unlink(video_path)
+                # Load models
+                audio_processor, vae, unet, pe = load_all_model()
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                timesteps = torch.tensor([0], device=device)
 
-            # return video_bytes
+                self.models = {
+                    'audio_processor': audio_processor,
+                    'vae': vae,
+                    'unet': unet,
+                    'pe': pe,
+                    'device': device,
+                    'timesteps': timesteps
+                }
+                self.models_loaded = True
+                print(f"[VideoGenerator] Models loaded successfully")
+
+            # Run MuseTalk inference
+            from musetalk.utils.utils import datagen
+
+            # Prepare input
+            # MuseTalk expects a video path or image folder
+            # Since we have a single image, create a temp folder with the image
+            import shutil
+            temp_img_dir = tempfile.mkdtemp()
+            try:
+                # Copy avatar image to temp folder
+                temp_img_path = os.path.join(temp_img_dir, "avatar.jpg")
+                shutil.copy(str(avatar_image_path), temp_img_path)
+
+                # Run inference using MuseTalk's main function
+                # Note: This is a simplified version - you may need to adjust parameters
+                from musetalk.inference import inference
+
+                video_output, _ = inference(
+                    audio_path=audio_temp_path,
+                    video_path=temp_img_dir,  # Use image folder
+                    bbox_shift=0,
+                    extra_margin=10,
+                    parsing_mode="jaw"
+                )
+
+                print(f"[VideoGenerator] Video generated: {video_output}")
+
+                # Read generated video
+                with open(video_output, 'rb') as f:
+                    video_bytes = f.read()
+
+                # Clean up temporary video if not saving to output_path
+                if output_path is None:
+                    os.unlink(video_output)
+
+                return video_bytes
+
+            finally:
+                # Clean up temp image directory
+                shutil.rmtree(temp_img_dir, ignore_errors=True)
 
         finally:
             # Clean up temporary audio file

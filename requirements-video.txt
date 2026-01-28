@@ -2,21 +2,53 @@
 # Install this only if you need TTS + Lip-sync video generation
 # Usage: pip install -r requirements-video.txt
 
-# Video processing
+# MuseTalk Dependencies
+# Based on https://github.com/TMElyralab/MuseTalk
+
+# Core ML (compatible with CUDA 12.4)
+# Note: torch/torchvision/torchaudio already in requirements.txt
+
+# MMEngine and related packages
+mmengine>=0.10.0
+mmcv>=2.0.0
+mmdet>=3.0.0
+mmpose>=1.3.0
+
+# Video and image processing
 opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
 imageio>=2.34.0
 imageio-ffmpeg>=0.4.9
 pillow>=10.0.0
+av>=10.0.0
 
 # Face detection and alignment
 face-alignment>=1.4.0
+mediapipe>=0.10.0
 scikit-image>=0.21.0
+retinaface-pytorch>=0.0.1
 
-# Additional utilities
-tqdm>=4.66.0
+# Audio processing (additional)
+librosa>=0.10.0
 pydub>=0.25.1
+openai-whisper>=20230314  # For audio feature extraction
+
+# Diffusion models
+diffusers>=0.25.0
+omegaconf>=2.3.0
+
+# Utilities
+einops>=0.7.0
+tqdm>=4.66.0
+yacs>=0.1.8
+
+# ONNX (optional, for optimization)
+onnx>=1.15.0
+onnxruntime-gpu>=1.16.0  # GPU version
 
 # Note: This extends the base requirements.txt
-# Make sure to install requirements.txt first:
-# pip install -r requirements.txt
-# pip install -r requirements-video.txt
+# Installation order:
+# 1. pip install -r requirements.txt
+# 2. pip install -r requirements-video.txt
+# 3. git clone https://github.com/TMElyralab/MuseTalk.git NewAvata/MuseTalk
+# 4. cd NewAvata/MuseTalk && python scripts/download_models.py
