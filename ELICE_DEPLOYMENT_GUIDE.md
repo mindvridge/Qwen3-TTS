@@ -53,6 +53,28 @@ TTS_DEVICE=cuda:0
 TTS_DTYPE=bfloat16
 ```
 
+### 2-3. 비디오 생성 설치 (선택사항)
+
+TTS + 립싱크 영상 생성이 필요한 경우에만 설치:
+
+```bash
+# 비디오 생성 의존성 설치
+pip install -r requirements-video.txt
+
+# NewAvata 클론
+git clone https://github.com/mindvridge/NewAvata.git
+
+# .env에 비디오 기능 활성화
+echo "ENABLE_VIDEO=true" >> .env
+echo "NEWAVATA_PATH=NewAvata" >> .env
+
+# 아바타 이미지 디렉토리 생성
+mkdir -p avatars
+# 아바타 이미지를 avatars/ 폴더에 업로드
+```
+
+**Note**: 비디오 생성은 **A100 80GB** 권장 (TTS 8GB + 립싱크 15GB 메모리 사용)
+
 ---
 
 ## 📁 3단계: 참조 음성 파일 업로드

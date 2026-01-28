@@ -105,3 +105,9 @@ SUPPORTED_LANGUAGES = [
     "Spanish",
     "Italian",
 ]
+
+# Video generation settings (optional)
+ENABLE_VIDEO = os.getenv("ENABLE_VIDEO", "false").lower() == "true"
+VIDEO_AVATAR_DIR = os.getenv("VIDEO_AVATAR_DIR", os.path.join(BASE_DIR, "avatars"))
+VIDEO_OUTPUT_DIR = os.getenv("VIDEO_OUTPUT_DIR", os.path.join(BASE_DIR, "output"))
+NEWAVATA_PATH = os.getenv("NEWAVATA_PATH", os.path.join(BASE_DIR, "NewAvata"))

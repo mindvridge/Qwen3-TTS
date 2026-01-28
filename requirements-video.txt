@@ -1,0 +1,22 @@
+# Video Generation Dependencies (Optional)
+# Install this only if you need TTS + Lip-sync video generation
+# Usage: pip install -r requirements-video.txt
+
+# Video processing
+opencv-python>=4.8.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.4.9
+pillow>=10.0.0
+
+# Face detection and alignment
+face-alignment>=1.4.0
+scikit-image>=0.21.0
+
+# Additional utilities
+tqdm>=4.66.0
+pydub>=0.25.1
+
+# Note: This extends the base requirements.txt
+# Make sure to install requirements.txt first:
+# pip install -r requirements.txt
+# pip install -r requirements-video.txt

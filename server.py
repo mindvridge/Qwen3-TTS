@@ -10,6 +10,7 @@ import json
 import base64
 import time
 import re
+import os
 from typing import List
 from contextlib import asynccontextmanager
 
@@ -320,6 +321,132 @@ async def voice_clone_sse(request: VoiceCloneRequest, model_size: str = "0.6b", 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== Video Generation (Optional) ==============
+
+if config.ENABLE_VIDEO:
+    try:
+        from fastapi import File, UploadFile, Form
+        from video_generator import VideoGenerator, check_video_support
+
+        if check_video_support():
+            video_gen = VideoGenerator()
+
+            @app.post("/video/generate")
+            async def generate_video(
+                text: str = Form(...),
+                language: str = Form("Korean"),
+                ref_audio: str = Form(...),
+                ref_text: str = Form(...),
+                avatar_image: UploadFile = File(...),
+                model_size: str = Form("0.6b"),
+                x_vector_only_mode: bool = Form(True)
+            ):
+                """
+                Generate lip-synced video with TTS audio.
+
+                This endpoint combines TTS voice cloning with lip-sync video generation.
+                It first generates audio using the TTS model, then creates a video
+                with synchronized lip movements using the NewAvata framework.
+
+                Args:
+                    text: Text to synthesize
+                    language: Language code (e.g., "Korean", "English")
+                    ref_audio: Path to reference audio file for voice cloning
+                    ref_text: Text spoken in reference audio
+                    avatar_image: Avatar image file (JPG/PNG)
+                    model_size: TTS model size ("0.6b" or "1.7b")
+                    x_vector_only_mode: Use x-vector mode for voice cloning
+
+                Returns:
+                    MP4 video file with lip-synced avatar
+                """
+                try:
+                    # Step 1: Generate audio using TTS
+                    print(f"[VideoGenerate] Step 1/2: Generating TTS audio")
+                    model_key = f"base_{model_size}" if model_size in ["0.6b", "1.7b"] else "base"
+                    model = model_manager.get_model(model_key)
+
+                    torch.cuda.synchronize()
+                    t0 = time.time()
+
+                    # Split into sentences and generate audio
+                    sentences = split_into_sentences(text)
+                    all_wavs = []
+                    for i, sentence in enumerate(sentences):
+                        print(f"[VideoGenerate] Generating sentence {i+1}/{len(sentences)}")
+                        wavs, sr = model.generate_voice_clone(
+                            text=sentence,
+                            language=language,
+                            ref_audio=ref_audio,
+                            ref_text=ref_text,
+                            x_vector_only_mode=x_vector_only_mode,
+                            non_streaming_mode=True,
+                        )
+                        if len(wavs) > 0:
+                            all_wavs.append(wavs[0])
+
+                    # Concatenate audio
+                    if len(all_wavs) > 1:
+                        audio_array = np.concatenate(all_wavs)
+                    else:
+                        audio_array = all_wavs[0]
+
+                    torch.cuda.synchronize()
+                    tts_time = time.time() - t0
+                    print(f"[VideoGenerate] TTS completed in {tts_time:.3f}s")
+
+                    # Step 2: Generate video with lip-sync
+                    print(f"[VideoGenerate] Step 2/2: Generating lip-sync video")
+
+                    # Save avatar image temporarily
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as avatar_temp:
+                        avatar_temp_path = avatar_temp.name
+                        avatar_temp.write(await avatar_image.read())
+
+                    try:
+                        video_bytes = video_gen.generate(
+                            audio_data=audio_array,
+                            avatar_image_path=avatar_temp_path,
+                            sample_rate=sr
+                        )
+
+                        torch.cuda.synchronize()
+                        total_time = time.time() - t0
+                        print(f"[VideoGenerate] Total time: {total_time:.3f}s (TTS: {tts_time:.3f}s)")
+
+                        return StreamingResponse(
+                            io.BytesIO(video_bytes),
+                            media_type="video/mp4",
+                            headers={
+                                "Content-Disposition": "attachment; filename=output.mp4",
+                                "X-Generation-Time": str(round(total_time, 3)),
+                                "X-TTS-Time": str(round(tts_time, 3))
+                            }
+                        )
+                    finally:
+                        # Clean up avatar temp file
+                        os.unlink(avatar_temp_path)
+
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            @app.get("/video/avatars")
+            async def list_avatars():
+                """List available avatar images."""
+                try:
+                    avatars = video_gen.list_avatars()
+                    return {"avatars": avatars}
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            print("[Server] Video generation endpoints enabled")
+        else:
+            print("[Server] Video generation not available (check NewAvata installation)")
+    except ImportError as e:
+        print(f"[Server] Video generation disabled: {e}")
 
 
 # ============== Web UI ==============
