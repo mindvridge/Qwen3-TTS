@@ -1,0 +1,67 @@
+# Qwen3-TTS Docker Compose Configuration
+# Usage:
+#   TTS only:       docker-compose up
+#   TTS + Video:    docker-compose -f docker-compose.yml -f docker-compose.video.yml up
+
+services:
+  qwen3-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_VIDEO: "false"  # Set to "true" for video generation
+    image: qwen3-tts:latest
+    container_name: qwen3-tts-server
+
+    # GPU configuration
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      - TTS_HOST=0.0.0.0
+      - TTS_PORT=8000
+      - TTS_DEVICE=cuda:0
+      - TTS_DTYPE=bfloat16
+      - TTS_USE_FLASH_ATTENTION=true
+      - TTS_USE_TORCH_COMPILE=false
+      - TTS_DEFAULT_MODEL=base_0.6b
+      - ENABLE_VIDEO=false
+
+    # Port mapping
+    ports:
+      - "8000:8000"
+
+    # Volume mounts
+    volumes:
+      # Models (persistent)
+      - ./models:/app/models
+      # Avatars (if using video)
+      - ./avatars:/app/avatars
+      # Output (if using video)
+      - ./output:/app/output
+      # Reference audio
+      - ./sample(1).mp3:/app/sample(1).mp3:ro
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

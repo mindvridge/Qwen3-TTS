@@ -1,0 +1,35 @@
+# Qwen3-TTS + Video Generation Docker Compose Override
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.video.yml up
+#
+# Requirements:
+# - A100 80GB GPU (recommended)
+# - MuseTalk models downloaded (run download_musetalk_models.sh first)
+
+services:
+  qwen3-tts:
+    build:
+      args:
+        INSTALL_VIDEO: "true"  # Enable video dependencies
+
+    # Environment overrides for video generation
+    environment:
+      - ENABLE_VIDEO=true
+      - NEWAVATA_PATH=NewAvata
+      - VIDEO_AVATAR_DIR=avatars
+      - VIDEO_OUTPUT_DIR=output
+
+    # Additional volumes for MuseTalk
+    volumes:
+      # MuseTalk repository (must be cloned before docker build)
+      - ./NewAvata:/app/NewAvata
+
+    # GPU configuration for higher VRAM
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          memory: 64G  # A100 80GB recommended

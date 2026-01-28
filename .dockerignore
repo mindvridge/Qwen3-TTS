@@ -1,0 +1,69 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Claude Code
+.claude
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Logs
+*.log
+*.out
+
+# Models (will be downloaded or mounted as volume)
+models/*
+!models/.gitkeep
+
+# Output directories (will be mounted as volumes)
+output/*
+avatars/*
+
+# Temporary files
+*.tmp
+*.temp
+*.wav
+*.mp4
+test_*.json
+clone_request.json
+
+# Development files
+README.md
+LICENSE
+DEPLOYMENT.md
+DEPLOYMENT_CHECKLIST.md
+INTEGRATION_PLAN.md
+VIDEO_INTEGRATION_GUIDE.md
+
+# Local scripts
+start_server.bat
+run_local.bat
+download_weights.bat
+
+# Docker files (don't copy these into the image)
+Dockerfile
+docker-compose.yml
+docker-compose.video.yml
+.dockerignore
