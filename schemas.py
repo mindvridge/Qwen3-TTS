@@ -17,23 +17,6 @@ class GenerationParams(BaseModel):
     do_sample: bool = True
 
 
-class CustomVoiceRequest(BaseModel):
-    """Request for custom voice generation."""
-    text: Union[str, List[str]] = Field(..., description="Text to synthesize")
-    language: Union[str, List[str]] = Field(default="Auto", description="Language (Auto, Chinese, English, etc.)")
-    speaker: Union[str, List[str]] = Field(default="Vivian", description="Speaker name")
-    instruct: Union[str, List[str]] = Field(default="", description="Voice instruction (emotion, tone, etc.)")
-    generation_params: Optional[GenerationParams] = None
-
-
-class VoiceDesignRequest(BaseModel):
-    """Request for voice design generation."""
-    text: Union[str, List[str]] = Field(..., description="Text to synthesize")
-    language: Union[str, List[str]] = Field(default="Auto", description="Language")
-    instruct: Union[str, List[str]] = Field(..., description="Voice design description")
-    generation_params: Optional[GenerationParams] = None
-
-
 class VoiceCloneRequest(BaseModel):
     """Request for voice clone generation."""
     text: Union[str, List[str]] = Field(..., description="Text to synthesize")
@@ -42,23 +25,6 @@ class VoiceCloneRequest(BaseModel):
     ref_text: Union[str, List[str]] = Field(..., description="Reference audio transcript")
     x_vector_only_mode: bool = Field(default=False, description="Use x-vector only mode")
     generation_params: Optional[GenerationParams] = None
-
-
-class TTSResponse(BaseModel):
-    """Response containing generated audio."""
-    success: bool
-    message: str
-    sample_rate: Optional[int] = None
-    audio_count: Optional[int] = None
-    # Audio data will be returned as base64 encoded strings or file paths
-
-
-class ModelInfo(BaseModel):
-    """Model information."""
-    loaded_models: List[str]
-    available_models: List[str] = ["custom_voice", "voice_design", "base"]
-    available_speakers: List[str] = config.AVAILABLE_SPEAKERS
-    supported_languages: List[str] = config.SUPPORTED_LANGUAGES
 
 
 class HealthResponse(BaseModel):

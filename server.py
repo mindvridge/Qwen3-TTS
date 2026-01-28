@@ -6,29 +6,24 @@
 # Based on Qwen3-TTS examples from https://github.com/QwenLM/Qwen3-TTS
 
 import io
-import os
+import json
 import base64
 import time
-import tempfile
-from typing import List, Union
+import re
+from typing import List
 from contextlib import asynccontextmanager
 
 import torch
 import soundfile as sf
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 
 import config
 from models import model_manager
 from schemas import (
-    CustomVoiceRequest,
-    VoiceDesignRequest,
     VoiceCloneRequest,
-    TTSResponse,
-    ModelInfo,
     HealthResponse,
     GenerationParams,
 )
@@ -44,7 +39,6 @@ async def lifespan(app: FastAPI):
     print(f"Flash Attention: {config.USE_FLASH_ATTENTION}")
     print("=" * 50)
 
-    # Load default models
     model_manager.load_default_models()
 
     print("=" * 50)
@@ -61,7 +55,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -69,6 +62,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============== Helpers ==============
+
+def split_into_sentences(text: str) -> List[str]:
+    """Split text into sentences for Korean/English."""
+    # Korean sentence endings: . ? ! and their combinations
+    # Also handle cases like "... " or "?? "
+    pattern = r'[.!?]+[\s]+'
+    sentences = re.split(pattern, text)
+    # Filter out empty strings and strip whitespace
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    # If no split occurred (no sentence endings), return original text
+    if len(sentences) == 0:
+        sentences = [text.strip()]
+
+    print(f"[DEBUG] Split text into {len(sentences)} sentence(s)")
+    for i, sent in enumerate(sentences):
+        print(f"[DEBUG] Sentence {i}: '{sent[:50]}...'")
+
+    return sentences
 
 
 def get_generation_kwargs(params: GenerationParams = None) -> dict:
@@ -96,7 +111,6 @@ def audio_to_base64(wav: np.ndarray, sample_rate: int) -> str:
 def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool = False, generation_time: float = 0.0):
     """Create response with audio data."""
     if single and len(wavs) == 1:
-        # Return single WAV file directly
         buffer = io.BytesIO()
         sf.write(buffer, wavs[0], sample_rate, format="WAV")
         buffer.seek(0)
@@ -106,11 +120,10 @@ def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool =
             headers={
                 "Content-Disposition": "attachment; filename=output.wav",
                 "X-Generation-Time": f"{generation_time:.3f}",
-                "Access-Control-Expose-Headers": "X-Generation-Time"
+                "Access-Control-Expose-Headers": "X-Generation-Time",
             }
         )
     else:
-        # Return JSON with base64 encoded audio
         audio_data = [audio_to_base64(wav, sample_rate) for wav in wavs]
         return JSONResponse({
             "success": True,
@@ -122,29 +135,20 @@ def create_wav_response(wavs: List[np.ndarray], sample_rate: int, single: bool =
         })
 
 
-# ============== Health & Info Endpoints ==============
+# ============== Health & Info ==============
 
 @app.get("/", response_model=HealthResponse)
 async def root():
-    """Health check endpoint."""
-    return HealthResponse(
-        status="ok",
-        models_loaded=model_manager.get_loaded_models()
-    )
+    return HealthResponse(status="ok", models_loaded=model_manager.get_loaded_models())
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint."""
-    return HealthResponse(
-        status="ok",
-        models_loaded=model_manager.get_loaded_models()
-    )
+    return HealthResponse(status="ok", models_loaded=model_manager.get_loaded_models())
 
 
 @app.get("/info")
 async def get_info():
-    """Get server and model information."""
     return {
         "loaded_models": model_manager.get_loaded_models(),
         "available_models": list(config.MODELS.keys()),
@@ -155,7 +159,6 @@ async def get_info():
 
 @app.post("/load/{model_type}")
 async def load_model(model_type: str):
-    """Load a specific model."""
     try:
         model_manager.load_model(model_type)
         return {"success": True, "message": f"Model {model_type} loaded successfully"}
@@ -165,82 +168,15 @@ async def load_model(model_type: str):
 
 # ============== TTS Endpoints ==============
 
-@app.post("/tts/custom_voice")
-async def generate_custom_voice(request: CustomVoiceRequest, model_size: str = "0.6b"):
-    """
-    Generate speech using custom voice.
-
-    Available speakers: Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, Sohee
-    model_size: "0.6b" (faster) or "1.7b" (higher quality)
-    """
-    try:
-        model_key = f"custom_voice_{model_size}" if model_size in ["0.6b", "1.7b"] else "custom_voice"
-        model = model_manager.get_model(model_key)
-        gen_kwargs = get_generation_kwargs(request.generation_params)
-
-        torch.cuda.synchronize()
-        t0 = time.time()
-
-        wavs, sr = model.generate_custom_voice(
-            text=request.text,
-            language=request.language,
-            speaker=request.speaker,
-            instruct=request.instruct,
-            **gen_kwargs,
-        )
-
-        torch.cuda.synchronize()
-        t1 = time.time()
-        gen_time = t1 - t0
-        print(f"[CustomVoice] Generated in {gen_time:.3f}s")
-
-        single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/tts/voice_design")
-async def generate_voice_design(request: VoiceDesignRequest):
-    """
-    Generate speech using voice design.
-
-    Provide a detailed description of the desired voice characteristics.
-    """
-    try:
-        model = model_manager.get_model("voice_design")
-        gen_kwargs = get_generation_kwargs(request.generation_params)
-
-        torch.cuda.synchronize()
-        t0 = time.time()
-
-        wavs, sr = model.generate_voice_design(
-            text=request.text,
-            language=request.language,
-            instruct=request.instruct,
-            **gen_kwargs,
-        )
-
-        torch.cuda.synchronize()
-        t1 = time.time()
-        gen_time = t1 - t0
-        print(f"[VoiceDesign] Generated in {gen_time:.3f}s")
-
-        single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/tts/voice_clone")
 async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.6b"):
     """
     Generate speech by cloning a reference voice.
 
-    Provide reference audio (path or URL) and its transcript.
-    model_size: "0.6b" (faster) or "1.7b" (higher quality)
+    - model_size: "0.6b" (faster) or "1.7b" (higher quality)
+
+    Splits text into sentences and generates each sentence separately to prevent truncation,
+    then concatenates all audio chunks into a single file.
     """
     try:
         model_key = f"base_{model_size}" if model_size in ["0.6b", "1.7b"] else "base"
@@ -250,63 +186,136 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
         torch.cuda.synchronize()
         t0 = time.time()
 
-        wavs, sr = model.generate_voice_clone(
-            text=request.text,
-            language=request.language,
-            ref_audio=request.ref_audio,
-            ref_text=request.ref_text,
-            x_vector_only_mode=request.x_vector_only_mode,
-            **gen_kwargs,
-        )
+        # Handle single string input
+        if isinstance(request.text, str):
+            input_text = request.text
+            print(f"[DEBUG] Input text: '{input_text[:100]}...'")
 
-        torch.cuda.synchronize()
-        t1 = time.time()
-        gen_time = t1 - t0
-        print(f"[VoiceClone] Generated in {gen_time:.3f}s")
+            # Split into sentences
+            sentences = split_into_sentences(input_text)
 
-        single = isinstance(request.text, str)
-        return create_wav_response(wavs, sr, single=single, generation_time=gen_time)
+            # Generate each sentence separately
+            all_wavs = []
+            for i, sentence in enumerate(sentences):
+                print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
+
+                wavs, sr = model.generate_voice_clone(
+                    text=sentence,
+                    language=request.language,
+                    ref_audio=request.ref_audio,
+                    ref_text=request.ref_text,
+                    x_vector_only_mode=request.x_vector_only_mode,
+                    non_streaming_mode=True,  # Use non-streaming for single sentences
+                    **gen_kwargs,
+                )
+
+                # Each sentence returns a list of wavs, take the first one
+                if len(wavs) > 0:
+                    all_wavs.append(wavs[0])
+                    print(f"[DEBUG]   Sentence {i+1} audio: shape={wavs[0].shape}, duration={len(wavs[0])/sr:.2f}s")
+
+            torch.cuda.synchronize()
+            gen_time = time.time() - t0
+
+            print(f"[DEBUG] Generated {len(all_wavs)} sentence audio(s)")
+
+            # Concatenate all sentence audios
+            if len(all_wavs) > 1:
+                print(f"[DEBUG] Concatenating {len(all_wavs)} sentence audios")
+                combined = np.concatenate(all_wavs)
+                wavs = [combined]
+                print(f"[DEBUG] Combined audio duration: {len(combined)/sr:.2f}s")
+            elif len(all_wavs) == 1:
+                wavs = all_wavs
+            else:
+                raise ValueError("No audio generated")
+
+            print(f"[VoiceClone] Generated in {gen_time:.3f}s ({len(sentences)} sentence(s))")
+            return create_wav_response(wavs, sr, single=True, generation_time=gen_time)
+
+        # Handle list input (original behavior)
+        else:
+            print(f"[DEBUG] Input text list: {len(request.text)} items")
+
+            wavs, sr = model.generate_voice_clone(
+                text=request.text,
+                language=request.language,
+                ref_audio=request.ref_audio,
+                ref_text=request.ref_text,
+                x_vector_only_mode=request.x_vector_only_mode,
+                non_streaming_mode=True,
+                **gen_kwargs,
+            )
+
+            torch.cuda.synchronize()
+            gen_time = time.time() - t0
+            print(f"[VoiceClone] Generated in {gen_time:.3f}s ({len(wavs)} item(s))")
+            return create_wav_response(wavs, sr, single=False, generation_time=gen_time)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============== Simple GET endpoints for quick testing ==============
+# ============== SSE Streaming ==============
 
-@app.get("/tts/speak")
-async def speak(
-    text: str,
-    speaker: str = "Vivian",
-    language: str = "Auto",
-    instruct: str = "",
-    model_size: str = "0.6b",
-):
+@app.post("/tts/voice_clone/sse")
+async def voice_clone_sse(request: VoiceCloneRequest, model_size: str = "0.6b", streaming: bool = True):
     """
-    Simple GET endpoint for quick TTS testing.
+    Generate TTS via Server-Sent Events.
 
-    Example: /tts/speak?text=Hello&speaker=Ryan&language=English&model_size=0.6b
-    model_size: "0.6b" (faster) or "1.7b" (higher quality)
+    Sends progress events (meta, audio, done) for real-time UI updates.
+    - streaming: use streaming text processing mode (default: True)
     """
     try:
-        model_key = f"custom_voice_{model_size}" if model_size in ["0.6b", "1.7b"] else "custom_voice"
+        model_key = f"base_{model_size}" if model_size in ["0.6b", "1.7b"] else "base"
         model = model_manager.get_model(model_key)
+        gen_kwargs = get_generation_kwargs(request.generation_params)
 
-        wavs, sr = model.generate_custom_voice(
-            text=text,
-            language=language,
-            speaker=speaker,
-            instruct=instruct,
-            max_new_tokens=config.DEFAULT_MAX_NEW_TOKENS,
-        )
+        text = request.text if isinstance(request.text, str) else request.text[0]
+        print(f"[SSE VoiceClone] Generating: '{text[:50]}...'")
 
-        buffer = io.BytesIO()
-        sf.write(buffer, wavs[0], sr, format="WAV")
-        buffer.seek(0)
+        async def event_generator():
+            t0 = time.time()
+
+            meta = {"status": "generating", "text": text}
+            yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+
+            torch.cuda.synchronize()
+
+            wavs, sr = model.generate_voice_clone(
+                text=text,
+                language=request.language if isinstance(request.language, str) else request.language[0],
+                ref_audio=request.ref_audio if isinstance(request.ref_audio, str) else request.ref_audio[0],
+                ref_text=request.ref_text if isinstance(request.ref_text, str) else request.ref_text[0],
+                x_vector_only_mode=request.x_vector_only_mode,
+                non_streaming_mode=not streaming,
+                **gen_kwargs,
+            )
+
+            torch.cuda.synchronize()
+            gen_time = time.time() - t0
+            print(f"[SSE VoiceClone] Generated in {gen_time:.3f}s")
+
+            audio_b64 = audio_to_base64(wavs[0], sr)
+            chunk_data = {
+                "chunk_index": 0,
+                "audio": audio_b64,
+                "sample_rate": sr,
+                "generation_time": round(gen_time, 3),
+            }
+            yield f"event: audio\ndata: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+
+            done_data = {"total_time": round(gen_time, 3), "total_chunks": 1}
+            yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
 
         return StreamingResponse(
-            buffer,
-            media_type="audio/wav",
-            headers={"Content-Disposition": f"attachment; filename=speech.wav"}
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Expose-Headers": "X-Generation-Time",
+            }
         )
 
     except Exception as e:
@@ -317,7 +326,6 @@ async def speak(
 
 @app.get("/ui")
 async def web_ui():
-    """Serve the web UI."""
     return FileResponse("web/index.html")
 
 

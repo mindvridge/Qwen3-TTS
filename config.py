@@ -15,14 +15,43 @@ USE_FLASH_ATTENTION = os.getenv("TTS_USE_FLASH_ATTENTION", "false").lower() == "
 USE_TORCH_COMPILE = os.getenv("TTS_USE_TORCH_COMPILE", "false").lower() == "true"  # Disabled - causes CUDA errors
 USE_WARMUP = os.getenv("TTS_USE_WARMUP", "false").lower() == "true"  # Disabled by default due to torch.compile compatibility
 
-# Model paths - 1.7B models (higher quality, slower)
-MODEL_1_7B_CUSTOM_VOICE = "c:/Qwen3-TTS/models/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-MODEL_1_7B_VOICE_DESIGN = "c:/Qwen3-TTS/models/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-MODEL_1_7B_BASE = "c:/Qwen3-TTS/models/Qwen3-TTS-12Hz-1.7B-Base"
+# Model paths - Auto-detect environment (Windows/Linux)
+# Set environment variables to override, or use Hugging Face auto-download
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Model paths - 0.6B models (faster, slightly lower quality)
-MODEL_0_6B_CUSTOM_VOICE = "c:/Qwen3-TTS/models/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-MODEL_0_6B_BASE = "c:/Qwen3-TTS/models/Qwen3-TTS-12Hz-0.6B-Base"
+# 1.7B models (higher quality, slower)
+MODEL_1_7B_CUSTOM_VOICE = os.getenv(
+    "MODEL_1_7B_CUSTOM_VOICE",
+    os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    if os.path.exists(os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-CustomVoice"))
+    else "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+)
+MODEL_1_7B_VOICE_DESIGN = os.getenv(
+    "MODEL_1_7B_VOICE_DESIGN",
+    os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+    if os.path.exists(os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign"))
+    else "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+)
+MODEL_1_7B_BASE = os.getenv(
+    "MODEL_1_7B_BASE",
+    os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-Base")
+    if os.path.exists(os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-1.7B-Base"))
+    else "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+)
+
+# 0.6B models (faster, slightly lower quality)
+MODEL_0_6B_CUSTOM_VOICE = os.getenv(
+    "MODEL_0_6B_CUSTOM_VOICE",
+    os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-0.6B-CustomVoice")
+    if os.path.exists(os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-0.6B-CustomVoice"))
+    else "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+)
+MODEL_0_6B_BASE = os.getenv(
+    "MODEL_0_6B_BASE",
+    os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-0.6B-Base")
+    if os.path.exists(os.path.join(BASE_DIR, "models/Qwen3-TTS-12Hz-0.6B-Base"))
+    else "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+)
 
 # All available models
 MODELS = {
@@ -40,7 +69,7 @@ MODELS = {
 }
 
 # Default model to load on startup
-DEFAULT_MODEL = os.getenv("TTS_DEFAULT_MODEL", "custom_voice_0.6b")
+DEFAULT_MODEL = os.getenv("TTS_DEFAULT_MODEL", "base_0.6b")
 
 # Generation defaults
 DEFAULT_MAX_NEW_TOKENS = 2048

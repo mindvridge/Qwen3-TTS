@@ -194,6 +194,10 @@
             margin-bottom: 20px;
             font-size: 18px;
         }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
     </style>
 </head>
 <body>
@@ -314,9 +318,19 @@
                 </div>
             </div>
 
-            <button class="btn" onclick="generateTTS()">음성 생성</button>
+            <div class="row">
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <button class="btn" onclick="generateTTS()" id="btn-generate" style="width:100%">음성 생성</button>
+                </div>
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <button class="btn" onclick="generateStreamTTS()" id="btn-stream" style="width:100%; background: linear-gradient(135deg, #ff6b35 0%, #cc5500 100%);">스트리밍 생성</button>
+                </div>
+            </div>
 
             <div id="tts-result"></div>
+            <div id="stream-progress" style="display:none;"></div>
         </div>
     </div>
 
@@ -462,6 +476,232 @@
             } catch (e) {
                 showResult('tts-result', 'error', `Error: ${e.message}`);
             }
+        }
+
+        // ============== Streaming TTS ==============
+        let audioContext = null;
+        let streamAbortController = null;
+
+        function getAudioContext() {
+            if (!audioContext || audioContext.state === 'closed') {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioContext;
+        }
+
+        async function generateStreamTTS() {
+            const text = document.getElementById('tts-text').value;
+            const language = document.getElementById('tts-language').value;
+            const model = document.getElementById('tts-model').value;
+
+            const voice = voices.find(v => v.name === selectedVoice);
+            if (!voice) {
+                showResult('tts-result', 'error', '음성을 선택하세요.');
+                return;
+            }
+
+            // Disable buttons
+            document.getElementById('btn-generate').disabled = true;
+            document.getElementById('btn-stream').disabled = true;
+
+            const progressEl = document.getElementById('stream-progress');
+            progressEl.style.display = 'block';
+            progressEl.innerHTML = '<div class="status loading">스트리밍 준비 중...</div>';
+            document.getElementById('tts-result').innerHTML = '';
+
+            // Abort any previous stream
+            if (streamAbortController) streamAbortController.abort();
+            streamAbortController = new AbortController();
+
+            try {
+                const res = await fetch(`${API_BASE}/tts/voice_clone/sse?model_size=${model}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text,
+                        language,
+                        ref_audio: voice.refAudio,
+                        ref_text: voice.refText,
+                        x_vector_only_mode: voice.refText.trim() === ''
+                    }),
+                    signal: streamAbortController.signal
+                });
+
+                if (!res.ok) throw new Error('Streaming request failed');
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let audioChunks = [];
+                let totalChunks = 0;
+                let receivedChunks = 0;
+                let totalGenTime = 0;
+                let ctx = getAudioContext();
+                let playQueue = [];
+                let isPlaying = false;
+                let nextPlayTime = ctx.currentTime;
+
+                async function playNextChunk() {
+                    if (playQueue.length === 0) {
+                        isPlaying = false;
+                        return;
+                    }
+                    isPlaying = true;
+                    const audioData = playQueue.shift();
+                    try {
+                        const audioBuffer = await ctx.decodeAudioData(audioData);
+                        const source = ctx.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(ctx.destination);
+                        if (nextPlayTime < ctx.currentTime) {
+                            nextPlayTime = ctx.currentTime;
+                        }
+                        source.start(nextPlayTime);
+                        nextPlayTime += audioBuffer.duration;
+                        source.onended = () => playNextChunk();
+                    } catch (e) {
+                        console.error('Audio decode error:', e);
+                        playNextChunk();
+                    }
+                }
+
+                function enqueueAudio(base64Wav) {
+                    const binaryStr = atob(base64Wav);
+                    const bytes = new Uint8Array(binaryStr.length);
+                    for (let i = 0; i < binaryStr.length; i++) {
+                        bytes[i] = binaryStr.charCodeAt(i);
+                    }
+                    audioChunks.push(bytes);
+                    playQueue.push(bytes.buffer.slice(0));
+                    if (!isPlaying) playNextChunk();
+                }
+
+                // Read SSE stream
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    let eventType = '';
+                    let eventData = '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            eventType = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            eventData = line.slice(6);
+                        } else if (line === '' && eventType && eventData) {
+                            try {
+                                const data = JSON.parse(eventData);
+
+                                if (eventType === 'meta') {
+                                    progressEl.innerHTML = `
+                                        <div class="status loading">
+                                            음성 생성 중...
+                                            <div style="background:rgba(255,255,255,0.1);border-radius:4px;margin-top:8px;overflow:hidden;">
+                                                <div style="width:100%;height:6px;background:linear-gradient(90deg,#ff6b35,#ff9800);border-radius:4px;animation:pulse 1.5s ease-in-out infinite;"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                } else if (eventType === 'audio') {
+                                    receivedChunks++;
+                                    totalGenTime += data.generation_time;
+                                    progressEl.innerHTML = `
+                                        <div class="status loading">
+                                            음성 생성 완료! 재생 준비 중...
+                                        </div>
+                                    `;
+                                    enqueueAudio(data.audio);
+                                } else if (eventType === 'done') {
+                                    progressEl.innerHTML = `
+                                        <div class="status success">
+                                            스트리밍 완료! 생성 시간: ${data.total_time}초
+                                        </div>
+                                    `;
+                                    combineAndShowDownload(audioChunks, totalGenTime);
+                                }
+                            } catch (e) {
+                                console.error('Parse error:', e);
+                            }
+                            eventType = '';
+                            eventData = '';
+                        }
+                    }
+                }
+
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    progressEl.innerHTML = `<div class="status error">스트리밍 오류: ${e.message}</div>`;
+                }
+            } finally {
+                document.getElementById('btn-generate').disabled = false;
+                document.getElementById('btn-stream').disabled = false;
+            }
+        }
+
+        function combineAndShowDownload(audioChunks, totalGenTime) {
+            if (audioChunks.length === 0) return;
+            // Combine all WAV chunks into a single blob for download
+            // Each chunk is a complete WAV, so we need to extract PCM and re-wrap
+            let allPcm = [];
+            let sampleRate = 24000; // default
+            for (const chunk of audioChunks) {
+                // Read WAV header to get sample rate and data offset
+                const view = new DataView(chunk.buffer);
+                if (chunk.length > 44) {
+                    sampleRate = view.getUint32(24, true);
+                    // Find 'data' subchunk
+                    let offset = 12;
+                    while (offset < chunk.length - 8) {
+                        const id = String.fromCharCode(chunk[offset], chunk[offset+1], chunk[offset+2], chunk[offset+3]);
+                        const size = view.getUint32(offset + 4, true);
+                        if (id === 'data') {
+                            allPcm.push(chunk.slice(offset + 8, offset + 8 + size));
+                            break;
+                        }
+                        offset += 8 + size;
+                    }
+                }
+            }
+            if (allPcm.length === 0) return;
+
+            // Calculate total PCM size
+            const totalPcmSize = allPcm.reduce((acc, buf) => acc + buf.length, 0);
+
+            // Build combined WAV
+            const wavHeader = new ArrayBuffer(44);
+            const hv = new DataView(wavHeader);
+            const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) hv.setUint8(offset + i, str.charCodeAt(i)); };
+            writeStr(0, 'RIFF');
+            hv.setUint32(4, 36 + totalPcmSize, true);
+            writeStr(8, 'WAVE');
+            writeStr(12, 'fmt ');
+            hv.setUint32(16, 16, true);
+            hv.setUint16(20, 1, true);
+            hv.setUint16(22, 1, true);
+            hv.setUint32(24, sampleRate, true);
+            hv.setUint32(28, sampleRate * 2, true);
+            hv.setUint16(32, 2, true);
+            hv.setUint16(34, 16, true);
+            writeStr(36, 'data');
+            hv.setUint32(40, totalPcmSize, true);
+
+            const combinedBlob = new Blob([wavHeader, ...allPcm], { type: 'audio/wav' });
+            const url = URL.createObjectURL(combinedBlob);
+
+            const resultEl = document.getElementById('tts-result');
+            resultEl.innerHTML = `
+                <div class="audio-player">
+                    <strong>Combined Audio:</strong>
+                    <span style="color:#ff9800;margin-left:10px;">총 생성 시간: ${totalGenTime.toFixed(1)}초 (스트리밍)</span>
+                    <audio controls src="${url}"></audio>
+                    <br><br>
+                    <a href="${url}" download="stream_output.wav" class="btn" style="display:inline-block;text-decoration:none;margin-top:10px;">Download</a>
+                </div>
+            `;
         }
 
         // 초기화
