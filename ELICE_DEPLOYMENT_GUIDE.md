@@ -37,21 +37,43 @@ pip install -r requirements.txt
 pip install -U flash-attn --no-build-isolation
 ```
 
-### 2-2. Flash Attention 활성화
+### 2-2. 환경 설정 (A100 최적화)
 ```bash
 # .env 파일 생성
 cp .env.example .env
 
 # .env 파일 편집
-nano .env
+nano .env  # or vi .env
 ```
 
-`.env` 파일 내용:
+`.env` 파일 A100 최적화 설정:
 ```bash
-TTS_USE_FLASH_ATTENTION=true
+# Server Settings
+TTS_HOST=0.0.0.0
+TTS_PORT=8000
+
+# Device Configuration
 TTS_DEVICE=cuda:0
-TTS_DTYPE=bfloat16
+TTS_DTYPE=bfloat16  # A100 optimized
+
+# Performance Settings (A100 40GB - TTS only)
+TTS_USE_FLASH_ATTENTION=true  # 2-3x speedup on A100
+TTS_USE_TORCH_COMPILE=false   # Stable (experimental feature)
+TTS_USE_WARMUP=false          # Disabled by default
+
+# Model Selection
+TTS_DEFAULT_MODEL=base_0.6b   # Faster, 8GB VRAM
+# TTS_DEFAULT_MODEL=base_1.7b  # Higher quality, 15GB VRAM
+
+# Video Generation (Optional)
+ENABLE_VIDEO=false  # Set to true for TTS+Video (requires A100 80GB)
 ```
+
+**성능 최적화 포인트:**
+- ✅ `TTS_USE_FLASH_ATTENTION=true`: A100에서 2-3배 속도 향상 (Linux 전용)
+- ✅ `TTS_DTYPE=bfloat16`: A100에 최적화된 데이터 타입
+- ✅ `TTS_DEFAULT_MODEL=base_0.6b`: 빠른 추론, 메모리 효율적 (8GB VRAM)
+- ⚠️ `TTS_USE_TORCH_COMPILE=false`: 안정성 우선 (실험하려면 true)
 
 ### 2-3. 비디오 생성 설치 (선택사항)
 

@@ -69,15 +69,24 @@ class TTSModelManager:
         """Run warmup inference to trigger JIT compilation."""
         print(f"Warming up {model_type}...")
         try:
+            import os
             t0 = time.time()
             # Determine which method to use based on model type
             if "base" in model_type:
                 # For base models, use a simple reference audio warmup
-                # Just run a minimal generation to trigger compilation
+                # Look for sample audio in the project directory (cross-platform)
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                sample_audio = os.path.join(base_dir, "sample(1).mp3")
+
+                # Skip warmup if sample audio doesn't exist
+                if not os.path.exists(sample_audio):
+                    print(f"Skipping warmup: sample audio not found at {sample_audio}")
+                    return
+
                 model.generate_voice_clone(
                     text=WARMUP_TEXT,
                     language="Korean",
-                    ref_audio="c:/Qwen3-TTS/sample(1).mp3",
+                    ref_audio=sample_audio,
                     ref_text="안녕하세요.",
                     x_vector_only_mode=True,
                     max_new_tokens=256,
