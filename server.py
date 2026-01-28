@@ -195,6 +195,25 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # Split into sentences
             sentences = split_into_sentences(input_text)
 
+            # Warmup: Generate a short phrase first to lock voice characteristics
+            # This helps the model adapt to the reference voice before actual content
+            if len(sentences) > 0:
+                warmup_text = request.ref_text[:50] if len(request.ref_text) > 20 else request.ref_text
+                print(f"[DEBUG] Warmup generation with ref_text: '{warmup_text[:30]}...'")
+                try:
+                    _, _ = model.generate_voice_clone(
+                        text=warmup_text,
+                        language=request.language,
+                        ref_audio=request.ref_audio,
+                        ref_text=request.ref_text,
+                        x_vector_only_mode=request.x_vector_only_mode,
+                        non_streaming_mode=True,
+                        **gen_kwargs,
+                    )
+                    print(f"[DEBUG] Warmup complete - voice characteristics locked")
+                except Exception as e:
+                    print(f"[DEBUG] Warmup failed (non-critical): {e}")
+
             # Generate each sentence separately
             all_wavs = []
             for i, sentence in enumerate(sentences):
