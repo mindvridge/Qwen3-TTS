@@ -24,6 +24,7 @@ class VoiceCloneRequest(BaseModel):
     ref_audio: Union[str, List[str]] = Field(..., description="Reference audio path or URL")
     ref_text: Union[str, List[str]] = Field(..., description="Reference audio transcript")
     x_vector_only_mode: bool = Field(default=False, description="Use x-vector only mode")
+    split_sentences: bool = Field(default=True, description="Split text into sentences (False = generate as single block)")
     generation_params: Optional[GenerationParams] = None
 
 

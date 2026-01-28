@@ -191,13 +191,32 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
         if isinstance(request.text, str):
             input_text = request.text
             print(f"[DEBUG] Input text: '{input_text[:100]}...'")
+            print(f"[DEBUG] split_sentences={request.split_sentences}")
 
-            # Split into sentences
+            # Option 1: Generate as single block (no sentence splitting)
+            if not request.split_sentences:
+                print(f"[DEBUG] Generating as single block (no sentence split)")
+                wavs, sr = model.generate_voice_clone(
+                    text=input_text,
+                    language=request.language,
+                    ref_audio=request.ref_audio,
+                    ref_text=request.ref_text,
+                    x_vector_only_mode=request.x_vector_only_mode,
+                    non_streaming_mode=True,
+                    **gen_kwargs,
+                )
+
+                torch.cuda.synchronize()
+                gen_time = time.time() - t0
+                print(f"[VoiceClone] Generated in {gen_time:.3f}s (single block)")
+                return create_wav_response(wavs, sr, single=True, generation_time=gen_time)
+
+            # Option 2: Split into sentences (default behavior)
             sentences = split_into_sentences(input_text)
 
             # Warmup: Generate a short phrase first to lock voice characteristics
             # This helps the model adapt to the reference voice before actual content
-            if len(sentences) > 0:
+            if len(sentences) > 1:
                 warmup_text = request.ref_text[:50] if len(request.ref_text) > 20 else request.ref_text
                 print(f"[DEBUG] Warmup generation with ref_text: '{warmup_text[:30]}...'")
                 try:
