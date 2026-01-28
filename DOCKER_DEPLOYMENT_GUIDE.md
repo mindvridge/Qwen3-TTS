@@ -237,15 +237,20 @@ docker builder prune
 
 ## 엘리스 AI 클라우드 배포
 
-엘리스 AI에서는 Docker를 직접 지원하지 않으므로, 일반 Python 환경으로 배포합니다.
+엘리스 클라우드는 **Ubuntu LTS 기반 Docker 컨테이너 환경**을 제공합니다.
+하지만 커스텀 Docker 이미지를 직접 배포하는 방식이 아니라, **사전 구성된 컨테이너 내부에서 개발하는 방식**입니다.
 
-**엘리스 AI 배포:**
+**배포 방법:**
+1. 엘리스 클라우드에서 VSCode/SSH로 컨테이너 접속
+2. Git clone 후 의존성 설치 및 서버 실행
+
+**엘리스 AI 상세 배포 가이드:**
 [ELICE_DEPLOYMENT_GUIDE.md](ELICE_DEPLOYMENT_GUIDE.md) 참고
 
-**다른 클라우드 (Docker 지원):**
-- RunPod: Docker 이미지 직접 사용 가능
-- Vast.ai: Docker 이미지 직접 사용 가능
-- AWS/GCP/Azure: Kubernetes 또는 ECS/Cloud Run 사용
+**커스텀 Docker 이미지 배포 (이 가이드의 Docker 파일 사용):**
+- RunPod: Docker 이미지 직접 배포 가능
+- Vast.ai: Docker 이미지 직접 배포 가능
+- AWS/GCP/Azure: ECS, Cloud Run, Kubernetes 사용
 
 ---
 
