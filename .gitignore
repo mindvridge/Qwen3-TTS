@@ -20,6 +20,12 @@ models/
 *.log
 clone_request.json
 
+# Environment (server-specific)
+.env
+
+# Docker build logs
+build_*.log
+
 # IDE
 .vscode/
 .idea/

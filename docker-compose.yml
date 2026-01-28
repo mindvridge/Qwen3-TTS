@@ -28,7 +28,7 @@ services:
       - TTS_PORT=8000
       - TTS_DEVICE=cuda:0
       - TTS_DTYPE=bfloat16
-      - TTS_USE_FLASH_ATTENTION=true
+      - TTS_USE_FLASH_ATTENTION=false
       - TTS_USE_TORCH_COMPILE=false
       - TTS_DEFAULT_MODEL=base_0.6b
       - ENABLE_VIDEO=false

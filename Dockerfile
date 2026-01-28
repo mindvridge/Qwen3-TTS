@@ -2,7 +2,7 @@
 # Base: NVIDIA CUDA 12.4 + Ubuntu 22.04
 # GPU: A100 40GB/80GB
 
-FROM nvidia/cuda:12.4.0-cudnn9-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -45,8 +45,10 @@ COPY requirements-video.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Flash Attention (A100 optimization)
-RUN pip install --no-cache-dir -U flash-attn --no-build-isolation || \
-    echo "Flash Attention installation failed, continuing without it"
+# NOTE: Disabled for local testing - Flash Attention compilation takes 1+ hour on Windows WSL2
+# Uncomment for production A100 deployment (Linux environment)
+# RUN pip install --no-cache-dir -U flash-attn --no-build-isolation || \
+#     echo "Flash Attention installation failed, continuing without it"
 
 # Install video dependencies (optional, comment out if not needed)
 ARG INSTALL_VIDEO=false
