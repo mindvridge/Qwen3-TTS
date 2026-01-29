@@ -237,13 +237,24 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                 except Exception as e:
                     print(f"[DEBUG] Warmup failed (non-critical): {e}")
 
+            # Voice cloning primer settings
+            # Adding a short filler before first sentence helps model adapt to voice
+            PRIMER_TEXT = "음, "  # Short filler that will be trimmed
+            PRIMER_DURATION_SEC = 0.35  # Approximate duration to trim (in seconds)
+
             # Generate each sentence separately
             all_wavs = []
             for i, sentence in enumerate(sentences):
-                print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
+                # For first sentence, add primer to help voice adaptation
+                if i == 0:
+                    primed_sentence = PRIMER_TEXT + sentence
+                    print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)} (with primer): '{primed_sentence[:50]}...'")
+                else:
+                    primed_sentence = sentence
+                    print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
 
                 wavs, sr = model.generate_voice_clone(
-                    text=sentence,
+                    text=primed_sentence,
                     language=request.language,
                     ref_audio=request.ref_audio,
                     ref_text=request.ref_text,
@@ -252,19 +263,12 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                     **gen_kwargs,
                 )
 
-                # First sentence: regenerate for better voice cloning quality
-                # The model adapts better on second pass with same reference
-                if i == 0 and len(sentences) >= 1:
-                    print(f"[DEBUG] Regenerating first sentence for better voice quality...")
-                    wavs, sr = model.generate_voice_clone(
-                        text=sentence,
-                        language=request.language,
-                        ref_audio=request.ref_audio,
-                        ref_text=request.ref_text,
-                        x_vector_only_mode=request.x_vector_only_mode,
-                        non_streaming_mode=True,
-                        **gen_kwargs,
-                    )
+                # For first sentence, trim the primer audio from the beginning
+                if i == 0 and len(wavs) > 0:
+                    trim_samples = int(PRIMER_DURATION_SEC * sr)
+                    if len(wavs[0]) > trim_samples + sr:  # Ensure we have enough audio
+                        wavs[0] = wavs[0][trim_samples:]
+                        print(f"[DEBUG]   Trimmed {PRIMER_DURATION_SEC}s primer from first sentence")
 
                 # Each sentence returns a list of wavs, take the first one
                 if len(wavs) > 0:
