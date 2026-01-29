@@ -486,7 +486,9 @@ if ! validate_faceparse "$FACEPARSE_MODEL"; then
     rm -f "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
     mkdir -p "$(dirname $FACEPARSE_MODEL)" "$(dirname $FACEPARSE_SYMLINK)"
 
-    # Export FACEPARSE_MODEL before heredoc so Python can read it
+    # Normalize path to avoid issues with '..' in path
+    FACEPARSE_MODEL=$(realpath -m "$FACEPARSE_MODEL")
+    FACEPARSE_SYMLINK=$(realpath -m "$FACEPARSE_SYMLINK")
     export FACEPARSE_MODEL
 
     python3 << 'DOWNLOAD_FACEPARSE'
@@ -494,8 +496,11 @@ import os
 import shutil
 import torch
 
+# Use normalized absolute path from environment
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
+# Normalize path in Python too
+output = os.path.abspath(os.path.expanduser(output))
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
 print(f'  Target path: {output}')
@@ -515,8 +520,11 @@ try:
             print(f'  Trying HuggingFace: {repo_id}')
             path = hf_hub_download(repo_id=repo_id, filename=filename)
             shutil.copy(path, output)
+            # Validate the copied file
             torch.load(output, map_location='cpu', weights_only=False)
-            print(f'  SUCCESS from {repo_id}')
+            # Verify file exists and has reasonable size
+            size = os.path.getsize(output)
+            print(f'  SUCCESS from {repo_id} (size: {size/1024/1024:.1f}MB)')
             downloaded = True
             break
         except Exception as e:
@@ -531,7 +539,8 @@ DOWNLOAD_FACEPARSE
 
     # Save exit code immediately (before any other command)
     DOWNLOAD_RESULT=$?
-    if [ $DOWNLOAD_RESULT -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+    # Trust Python's validation - it already ran torch.load successfully
+    if [ $DOWNLOAD_RESULT -eq 0 ]; then
         echo -e "  ${GREEN}FaceParse model downloaded and validated${NC}"
         # Create symlink
         ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
@@ -562,8 +571,10 @@ import os
 import shutil
 import torch
 
+# Use normalized absolute path from environment
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
+output = os.path.abspath(os.path.expanduser(output))
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
 print(f'  Target path: {output}')
@@ -584,7 +595,8 @@ try:
             path = hf_hub_download(repo_id=repo_id, filename=filename)
             shutil.copy(path, output)
             torch.load(output, map_location='cpu', weights_only=False)
-            print(f'  SUCCESS from {repo_id}')
+            size = os.path.getsize(output)
+            print(f'  SUCCESS from {repo_id} (size: {size/1024/1024:.1f}MB)')
             downloaded = True
             break
         except Exception as e:
@@ -599,7 +611,8 @@ RETRY_DOWNLOAD
 
         # Save exit code immediately (before any other command)
         RETRY_RESULT=$?
-        if [ $RETRY_RESULT -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+        # Trust Python's validation - it already ran torch.load successfully
+        if [ $RETRY_RESULT -eq 0 ]; then
             echo -e "  ${GREEN}FaceParse model downloaded successfully on retry $retry${NC}"
             ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
                 cp "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"

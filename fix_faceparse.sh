@@ -36,6 +36,9 @@ fi
 
 # Step 3: Download and validate
 echo -e "\n${CYAN}[3/4] Downloading FaceParse model...${NC}"
+
+# Normalize paths to avoid issues with '..' in path
+FACEPARSE_MODEL=$(realpath -m "$FACEPARSE_MODEL")
 mkdir -p "$(dirname $FACEPARSE_MODEL)"
 
 # Export FACEPARSE_MODEL before heredoc so Python can read it
@@ -46,9 +49,12 @@ import os
 import shutil
 import torch
 
+# Use normalized absolute paths
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
+output = os.path.abspath(os.path.expanduser(output))
 musetalk_output = os.path.expanduser('~/NewAvata/MuseTalk/models/face-parse-bisent/79999_iter.pth')
+musetalk_output = os.path.abspath(musetalk_output)
 
 print(f'  Target paths:')
 print(f'    NewAvata: {output}')
@@ -78,7 +84,8 @@ try:
             # Validate
             print(f'  Validating with torch.load...')
             torch.load(output, map_location='cpu', weights_only=False)
-            print(f'  SUCCESS from {repo_id}!')
+            size = os.path.getsize(output)
+            print(f'  SUCCESS from {repo_id}! (size: {size/1024/1024:.1f}MB)')
             downloaded = True
             break
         except Exception as e:
@@ -101,6 +108,7 @@ PYTHON_SCRIPT
 
 # Save exit code immediately (before any other command)
 DOWNLOAD_RESULT=$?
+# Trust Python's validation - it already ran torch.load successfully
 if [ $DOWNLOAD_RESULT -eq 0 ]; then
     echo -e "${GREEN}Download successful${NC}"
 else
