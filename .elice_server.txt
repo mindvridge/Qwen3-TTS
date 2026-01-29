@@ -1,0 +1,20 @@
+# Elice AI Cloud Server Address
+# Updated: 2026-01-29
+
+# TTS Server (Port 8000)
+TTS_SERVER=https://rhbwsfctehtfacax.tunnel.elice.io
+TTS_PORT=8000
+
+# NewAvata Lip-sync Server (Port 8001)
+NEWAVATA_SERVER=https://nzgwjxtxppjpasfr.tunnel.elice.io
+NEWAVATA_PORT=8001
+
+# TTS Endpoints
+TTS_HEALTH=https://rhbwsfctehtfacax.tunnel.elice.io/health
+VOICE_CLONE=https://rhbwsfctehtfacax.tunnel.elice.io/tts/voice_clone
+TTS_WEB_UI=https://rhbwsfctehtfacax.tunnel.elice.io/ui
+TTS_API_DOCS=https://rhbwsfctehtfacax.tunnel.elice.io/docs
+
+# NewAvata Endpoints
+NEWAVATA_HEALTH=https://nzgwjxtxppjpasfr.tunnel.elice.io/health
+NEWAVATA_GENERATE=https://nzgwjxtxppjpasfr.tunnel.elice.io/generate
