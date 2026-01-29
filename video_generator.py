@@ -1,51 +1,43 @@
 # coding=utf-8
-# Video Generator - TTS + Lip-sync Integration
-# Supports two modes:
-# 1. Direct MuseTalk integration (embedded)
-# 2. NewAvata API integration (external service, recommended for A100)
+# Video Generator - NewAvata Lip-sync Integration
+# Uses NewAvata's video-based precomputed avatar system
+# https://github.com/mindvridge/NewAvata
 
 import os
-import sys
-import io
-import tempfile
 import time
+import uuid
 import requests
 from pathlib import Path
-from typing import Union, Optional
-import numpy as np
-import soundfile as sf
+from typing import Optional, Dict, List, Any
 
 import config
 
 
 class VideoGenerator:
     """
-    Wrapper class for lip-sync video generation.
+    NewAvata 립싱크 비디오 생성 래퍼 클래스.
 
-    Supports two modes:
-    1. USE_NEWAVATA_API=true: Calls external NewAvata REST API (recommended)
-    2. USE_NEWAVATA_API=false: Runs MuseTalk directly (embedded mode)
+    NewAvata는 영상 기반 사전계산된 아바타를 사용합니다:
+    - 아바타 영상 → precompute → .pkl 파일
+    - 텍스트 → TTS → 오디오 → 립싱크 → 비디오
+
+    API 모드에서는 NewAvata 서버의 /api/generate 또는 /api/record 엔드포인트를 호출합니다.
     """
 
     def __init__(self):
         """Initialize VideoGenerator based on configuration."""
-        self.avatar_dir = Path(config.VIDEO_AVATAR_DIR)
-        self.output_dir = Path(config.VIDEO_OUTPUT_DIR)
-
-        # Create directories if they don't exist
-        self.avatar_dir.mkdir(parents=True, exist_ok=True)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Check which mode to use
         self.use_api = config.USE_NEWAVATA_API
         self.api_url = config.NEWAVATA_API_URL
+        self.output_dir = Path(config.VIDEO_OUTPUT_DIR)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if self.use_api:
-            # API mode - verify NewAvata service is reachable
             self._init_api_mode()
         else:
-            # Embedded mode - initialize MuseTalk directly
-            self._init_embedded_mode()
+            raise RuntimeError(
+                "Embedded mode is not supported for video-based NewAvata.\n"
+                "Please use API mode by setting USE_NEWAVATA_API=true and running NewAvata server."
+            )
 
     def _init_api_mode(self):
         """Initialize API mode - verify NewAvata service."""
@@ -53,9 +45,11 @@ class VideoGenerator:
 
         try:
             # Check if NewAvata API is available
-            response = requests.get(f"{self.api_url}/health", timeout=5)
+            response = requests.get(f"{self.api_url}/api/availability", timeout=5)
             if response.status_code == 200:
+                data = response.json()
                 print(f"[VideoGenerator] NewAvata API is available")
+                print(f"  Status: {data}")
                 self.newavata_available = True
             else:
                 print(f"[VideoGenerator] Warning: NewAvata API returned {response.status_code}")
@@ -69,262 +63,204 @@ class VideoGenerator:
             print(f"[VideoGenerator] Warning: API check failed: {e}")
             self.newavata_available = True
 
-        self.models_loaded = True  # API mode doesn't need local model loading
+    def list_avatars(self) -> List[Dict[str, Any]]:
+        """
+        사용 가능한 아바타 목록 조회.
 
-    def _init_embedded_mode(self):
-        """Initialize embedded mode - load MuseTalk directly."""
-        self.newavata_path = Path(config.NEWAVATA_PATH)
-
-        # Check if MuseTalk is available
-        musetalk_path = self.newavata_path / "MuseTalk"
-        if not musetalk_path.exists():
-            raise FileNotFoundError(
-                f"MuseTalk not found at {musetalk_path}. "
-                f"Please clone it first:\n"
-                f"  git clone https://github.com/TMElyralab/MuseTalk.git {musetalk_path}\n"
-                f"  cd {musetalk_path}\n"
-                f"  python scripts/download_models.py\n\n"
-                f"Or use NewAvata API mode by setting USE_NEWAVATA_API=true"
-            )
-
-        # Add MuseTalk to Python path
-        sys.path.insert(0, str(musetalk_path))
+        Returns:
+            아바타 정보 리스트 (name, path, preview 등)
+        """
+        if not self.use_api:
+            return []
 
         try:
-            # Import MuseTalk modules
-            from musetalk.utils.utils import load_all_model
-            from musetalk.utils.preprocessing import get_landmark_and_bbox
-            from musetalk.utils.blending import get_image
+            response = requests.get(f"{self.api_url}/api/avatars", timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"[VideoGenerator] Failed to get avatars: {response.status_code}")
+                return []
+        except Exception as e:
+            print(f"[VideoGenerator] Error getting avatars: {e}")
+            return []
 
-            self.musetalk = {
-                'load_all_model': load_all_model,
-                'get_landmark_and_bbox': get_landmark_and_bbox,
-                'get_image': get_image
-            }
+    def list_tts_engines(self) -> List[Dict[str, Any]]:
+        """
+        사용 가능한 TTS 엔진 목록 조회.
 
-            # Load models (lazy loading - only when first inference)
-            self.models_loaded = False
-            self.newavata_available = True
-            print(f"[VideoGenerator] MuseTalk modules loaded from {musetalk_path}")
-        except ImportError as e:
-            self.newavata_available = False
-            raise ImportError(
-                f"Failed to import MuseTalk modules: {e}\n"
-                f"Make sure dependencies are installed:\n"
-                f"  pip install -r requirements-video.txt\n"
-                f"  cd {musetalk_path}\n"
-                f"  pip install -r requirements.txt"
-            )
+        Returns:
+            TTS 엔진 정보 리스트
+        """
+        if not self.use_api:
+            return []
+
+        try:
+            response = requests.get(f"{self.api_url}/api/tts_engines", timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return []
+        except Exception as e:
+            print(f"[VideoGenerator] Error getting TTS engines: {e}")
+            return []
 
     def generate(
         self,
-        audio_data: Union[bytes, np.ndarray],
-        avatar_image_path: Union[str, Path],
-        sample_rate: int = 12000,
-        output_path: Optional[Union[str, Path]] = None
-    ) -> bytes:
+        text: str,
+        avatar_path: str = "auto",
+        tts_engine: str = "qwen3tts",
+        tts_voice: str = "default",
+        quality: str = "medium",
+        timeout: int = 300
+    ) -> Dict[str, Any]:
         """
-        Generate lip-synced video from audio and avatar image.
+        립싱크 비디오 생성 (녹화 모드).
+
+        NewAvata의 /api/record 엔드포인트를 사용하여 동기적으로 비디오를 생성합니다.
 
         Args:
-            audio_data: Audio data as bytes (WAV format) or numpy array
-            avatar_image_path: Path to avatar image file (JPG/PNG) or avatar name
-            sample_rate: Audio sample rate (default: 12000 for Qwen3-TTS)
-            output_path: Optional path to save output video (if None, returns bytes)
+            text: 생성할 텍스트
+            avatar_path: 아바타 경로 (precomputed/*.pkl) 또는 "auto"
+            tts_engine: TTS 엔진 (qwen3tts, cosyvoice, elevenlabs)
+            tts_voice: TTS 음성
+            quality: 품질 설정 (low, medium, high)
+            timeout: 타임아웃 (초)
 
         Returns:
-            Video file as bytes (MP4 format)
+            생성 결과 딕셔너리 (success, video_url, audio_url, duration 등)
         """
         if not self.newavata_available:
-            raise RuntimeError("Video generation is not properly initialized")
+            raise RuntimeError("NewAvata is not available")
 
-        if self.use_api:
-            return self._generate_via_api(audio_data, avatar_image_path, sample_rate, output_path)
-        else:
-            return self._generate_embedded(audio_data, avatar_image_path, sample_rate, output_path)
-
-    def _generate_via_api(
-        self,
-        audio_data: Union[bytes, np.ndarray],
-        avatar_image_path: Union[str, Path],
-        sample_rate: int,
-        output_path: Optional[Union[str, Path]]
-    ) -> bytes:
-        """Generate video using NewAvata REST API."""
         t0 = time.time()
+        session_id = str(uuid.uuid4())[:8]
 
-        # Convert audio to bytes if needed
-        if isinstance(audio_data, np.ndarray):
-            audio_io = io.BytesIO()
-            sf.write(audio_io, audio_data, sample_rate, format='WAV')
-            audio_bytes = audio_io.getvalue()
-        else:
-            audio_bytes = audio_data
-
-        # Resolve avatar path
-        avatar_path = Path(avatar_image_path)
-        if not avatar_path.is_absolute():
-            avatar_path = self.avatar_dir / avatar_path
-
-        if not avatar_path.exists():
-            raise FileNotFoundError(f"Avatar not found: {avatar_path}")
-
-        print(f"[VideoGenerator] Calling NewAvata API:")
-        print(f"  URL: {self.api_url}/generate")
+        print(f"[VideoGenerator] Generating lip-sync video:")
+        print(f"  Text: {text[:50]}...")
         print(f"  Avatar: {avatar_path}")
-        print(f"  Audio size: {len(audio_bytes)} bytes")
+        print(f"  TTS Engine: {tts_engine}")
+        print(f"  Quality: {quality}")
 
         try:
-            # Prepare multipart form data
-            files = {
-                'audio': ('audio.wav', audio_bytes, 'audio/wav'),
-                'avatar': ('avatar.jpg', open(avatar_path, 'rb'), 'image/jpeg')
+            # Use /api/record for synchronous video generation
+            payload = {
+                "text": text,
+                "avatar_path": avatar_path,
+                "tts_engine": tts_engine,
+                "tts_voice": tts_voice,
+                "quality": quality,
+                "sid": session_id,
+                "output_format": "mp4"
             }
 
-            # Call NewAvata API
             response = requests.post(
-                f"{self.api_url}/generate",
-                files=files,
-                timeout=300  # 5 minutes timeout for long videos
+                f"{self.api_url}/api/record",
+                json=payload,
+                timeout=timeout
             )
 
             if response.status_code != 200:
                 error_msg = response.text[:500] if response.text else "Unknown error"
-                raise RuntimeError(f"NewAvata API error ({response.status_code}): {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"NewAvata API error ({response.status_code}): {error_msg}"
+                }
 
-            video_bytes = response.content
+            result = response.json()
             gen_time = time.time() - t0
-            print(f"[VideoGenerator] Video generated via API in {gen_time:.2f}s ({len(video_bytes)} bytes)")
 
-            # Save to file if output_path specified
-            if output_path:
-                with open(output_path, 'wb') as f:
-                    f.write(video_bytes)
-                print(f"[VideoGenerator] Saved to {output_path}")
+            print(f"[VideoGenerator] Video generated in {gen_time:.2f}s")
+            print(f"  Result: {result}")
 
-            return video_bytes
+            return result
 
         except requests.exceptions.ConnectionError:
-            raise RuntimeError(
-                f"Cannot connect to NewAvata API at {self.api_url}\n"
-                f"Make sure the NewAvata server is running:\n"
-                f"  cd NewAvata/realtime-interview-avatar && bash run_server.sh"
-            )
+            return {
+                "success": False,
+                "error": f"Cannot connect to NewAvata API at {self.api_url}"
+            }
         except requests.exceptions.Timeout:
-            raise RuntimeError("NewAvata API request timed out (>5 minutes)")
+            return {
+                "success": False,
+                "error": f"NewAvata API request timed out (>{timeout}s)"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
-    def _generate_embedded(
+    def generate_async(
         self,
-        audio_data: Union[bytes, np.ndarray],
-        avatar_image_path: Union[str, Path],
-        sample_rate: int,
-        output_path: Optional[Union[str, Path]]
-    ) -> bytes:
-        """Generate video using embedded MuseTalk (original implementation)."""
-        # Convert audio to temporary file if needed
-        if isinstance(audio_data, bytes):
-            audio_io = io.BytesIO(audio_data)
-            audio_array, sr = sf.read(audio_io)
-        elif isinstance(audio_data, np.ndarray):
-            audio_array = audio_data
-            sr = sample_rate
-        else:
-            raise ValueError("audio_data must be bytes or numpy array")
+        text: str,
+        avatar_path: str = "auto",
+        tts_engine: str = "qwen3tts",
+        tts_voice: str = "default",
+        quality: str = "medium"
+    ) -> Dict[str, Any]:
+        """
+        립싱크 비디오 비동기 생성 (큐 시스템).
 
-        # Create temporary files
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as audio_temp:
-            audio_temp_path = audio_temp.name
-            sf.write(audio_temp_path, audio_array, sr)
+        NewAvata의 /api/generate 엔드포인트를 사용하여 큐에 요청을 추가합니다.
+        결과는 WebSocket을 통해 전달됩니다.
 
-        # Prepare output path
-        if output_path is None:
-            video_output = tempfile.mktemp(suffix='.mp4')
-        else:
-            video_output = str(output_path)
+        Args:
+            text: 생성할 텍스트
+            avatar_path: 아바타 경로 또는 "auto"
+            tts_engine: TTS 엔진
+            tts_voice: TTS 음성
+            quality: 품질 설정
+
+        Returns:
+            큐 상태 딕셔너리 (status, position, request_id)
+        """
+        if not self.newavata_available:
+            raise RuntimeError("NewAvata is not available")
+
+        session_id = str(uuid.uuid4())[:8]
 
         try:
-            print(f"[VideoGenerator] Generating lip-sync video (embedded mode):")
-            print(f"  Audio: {audio_temp_path}")
-            print(f"  Avatar: {avatar_image_path}")
-            print(f"  Output: {video_output}")
+            payload = {
+                "text": text,
+                "avatar_path": avatar_path,
+                "tts_engine": tts_engine,
+                "tts_voice": tts_voice,
+                "quality": quality,
+                "sid": session_id
+            }
 
-            # Load MuseTalk models (lazy loading)
-            if not self.models_loaded:
-                print(f"[VideoGenerator] Loading MuseTalk models (first time)...")
-                musetalk_path = self.newavata_path / "MuseTalk"
-                sys.path.insert(0, str(musetalk_path))
+            response = requests.post(
+                f"{self.api_url}/api/generate",
+                json=payload,
+                timeout=30
+            )
 
-                from musetalk.utils.utils import load_all_model
-                import torch
-
-                # Load models
-                audio_processor, vae, unet, pe = load_all_model()
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                timesteps = torch.tensor([0], device=device)
-
-                self.models = {
-                    'audio_processor': audio_processor,
-                    'vae': vae,
-                    'unet': unet,
-                    'pe': pe,
-                    'device': device,
-                    'timesteps': timesteps
+            if response.status_code != 200:
+                error_msg = response.text[:500] if response.text else "Unknown error"
+                return {
+                    "success": False,
+                    "error": f"NewAvata API error ({response.status_code}): {error_msg}"
                 }
-                self.models_loaded = True
-                print(f"[VideoGenerator] Models loaded successfully")
 
-            # Run MuseTalk inference
-            import shutil
-            temp_img_dir = tempfile.mkdtemp()
-            try:
-                # Copy avatar image to temp folder
-                temp_img_path = os.path.join(temp_img_dir, "avatar.jpg")
-                shutil.copy(str(avatar_image_path), temp_img_path)
+            result = response.json()
+            result["session_id"] = session_id
+            return result
 
-                # Run inference using MuseTalk's main function
-                from musetalk.inference import inference
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
-                video_output, _ = inference(
-                    audio_path=audio_temp_path,
-                    video_path=temp_img_dir,
-                    bbox_shift=0,
-                    extra_margin=10,
-                    parsing_mode="jaw"
-                )
-
-                print(f"[VideoGenerator] Video generated: {video_output}")
-
-                # Read generated video
-                with open(video_output, 'rb') as f:
-                    video_bytes = f.read()
-
-                # Clean up temporary video if not saving to output_path
-                if output_path is None:
-                    os.unlink(video_output)
-
-                return video_bytes
-
-            finally:
-                # Clean up temp image directory
-                shutil.rmtree(temp_img_dir, ignore_errors=True)
-
-        finally:
-            # Clean up temporary audio file
-            os.unlink(audio_temp_path)
-
-    def list_avatars(self) -> list:
-        """List available avatar images."""
-        avatar_files = []
-        for ext in ['*.jpg', '*.jpeg', '*.png']:
-            avatar_files.extend(self.avatar_dir.glob(ext))
-        return sorted([f.name for f in avatar_files])
-
-    def get_avatar_path(self, avatar_name: str) -> Path:
-        """Get full path to avatar image."""
-        avatar_path = self.avatar_dir / avatar_name
-        if not avatar_path.exists():
-            raise FileNotFoundError(f"Avatar not found: {avatar_name}")
-        return avatar_path
+    def get_system_status(self) -> Dict[str, Any]:
+        """NewAvata 서버 시스템 상태 조회."""
+        try:
+            response = requests.get(f"{self.api_url}/api/system_status", timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            return {"error": f"Status code: {response.status_code}"}
+        except Exception as e:
+            return {"error": str(e)}
 
 
 def check_video_support() -> bool:
@@ -332,9 +268,13 @@ def check_video_support() -> bool:
     if not config.ENABLE_VIDEO:
         return False
 
+    if not config.USE_NEWAVATA_API:
+        print("[VideoGenerator] Video requires USE_NEWAVATA_API=true")
+        return False
+
     try:
-        VideoGenerator()
-        return True
-    except (FileNotFoundError, ImportError) as e:
+        gen = VideoGenerator()
+        return gen.newavata_available
+    except Exception as e:
         print(f"[VideoGenerator] Not available: {e}")
         return False
