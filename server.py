@@ -195,10 +195,23 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
         if isinstance(request.text, str):
             input_text = request.text
             print(f"[DEBUG] Input text: '{input_text[:100]}...'")
-            print(f"[DEBUG] split_sentences={request.split_sentences}")
+
+            # Auto-detect split_sentences if not specified
+            # Default: single block for short text, split for long text
+            sentences = split_into_sentences(input_text)
+            text_length = len(input_text)
+            sentence_count = len(sentences)
+
+            if request.split_sentences is None:
+                # Auto-detect: split only if text is long (>200 chars) or has many sentences (>3)
+                should_split = text_length > 200 or sentence_count > 3
+                print(f"[DEBUG] Auto-detect: text_length={text_length}, sentences={sentence_count} -> split={should_split}")
+            else:
+                should_split = request.split_sentences
+                print(f"[DEBUG] User specified: split_sentences={should_split}")
 
             # Option 1: Generate as single block (no sentence splitting)
-            if not request.split_sentences:
+            if not should_split:
                 print(f"[DEBUG] Generating as single block (no sentence split)")
                 wavs, sr = model.generate_voice_clone(
                     text=input_text,
@@ -215,8 +228,8 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                 print(f"[VoiceClone] Generated in {gen_time:.3f}s (single block)")
                 return create_wav_response(wavs, sr, single=True, generation_time=gen_time)
 
-            # Option 2: Split into sentences (default behavior)
-            sentences = split_into_sentences(input_text)
+            # Option 2: Split into sentences (for long text)
+            print(f"[DEBUG] Splitting into {sentence_count} sentences for long text")
 
             # ROOT CAUSE FIX: Pre-compute voice clone prompt once
             # This extracts speaker embedding (x-vector) and reference speech codes
