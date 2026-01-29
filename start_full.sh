@@ -1069,6 +1069,15 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
+# CRITICAL: Set PYTHONPATH to include MuseTalk module
+MUSETALK_PATH="$HOME/NewAvata/MuseTalk"
+if [ -d "$MUSETALK_PATH" ]; then
+    export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
+    echo "PYTHONPATH set: $PYTHONPATH" >> /tmp/newavata_startup.log
+else
+    echo "WARNING: MuseTalk not found at $MUSETALK_PATH" >> /tmp/newavata_startup.log
+fi
+
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
 echo "Applying PyTorch 2.6 patches..." >> /tmp/newavata_startup.log
 find . -name "*.py" -type f 2>/dev/null | while read pyfile; do
@@ -1227,6 +1236,13 @@ else
         # Activate venv if exists
         if [ -f "venv/bin/activate" ]; then
             source venv/bin/activate
+        fi
+
+        # CRITICAL: Set PYTHONPATH to include MuseTalk module
+        MUSETALK_PATH="$HOME/NewAvata/MuseTalk"
+        if [ -d "$MUSETALK_PATH" ]; then
+            export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
+            echo -e "  ${GREEN}PYTHONPATH set to include MuseTalk${NC}"
         fi
 
         # Start server (try multiple methods)
