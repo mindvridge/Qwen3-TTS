@@ -312,14 +312,97 @@ except Exception as e:
     deactivate 2>/dev/null || true
 fi
 
-# Create avatars directory
-echo -e "\n${YELLOW}[6/7] Setting up avatars...${NC}"
-mkdir -p "$SCRIPT_DIR/avatars"
-AVATAR_COUNT=$(ls -1 "$SCRIPT_DIR/avatars/"*.{jpg,jpeg,png} 2>/dev/null | wc -l)
+# Setup NewAvata precomputed avatars
+echo -e "\n${YELLOW}[6/7] Setting up NewAvata avatars...${NC}"
+
+PRECOMPUTED_DIR="$NEWAVATA_APP_DIR/precomputed"
+mkdir -p "$PRECOMPUTED_DIR"
+
+# Check for existing precomputed avatars
+AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
 if [ "$AVATAR_COUNT" -gt 0 ]; then
-    echo -e "  ${GREEN}Found $AVATAR_COUNT avatar(s) in avatars/${NC}"
+    echo -e "  ${GREEN}Found $AVATAR_COUNT precomputed avatar(s)${NC}"
+    ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | while read f; do
+        echo -e "    - $(basename "$f")"
+    done
 else
-    echo -e "  ${YELLOW}No avatars found. Add images to avatars/ folder${NC}"
+    echo -e "  ${YELLOW}No precomputed avatars found. Creating sample avatar...${NC}"
+
+    # Download sample avatar video from NewAvata releases or create from sample
+    cd "$NEWAVATA_APP_DIR"
+
+    # Activate venv
+    if [ -f "venv/bin/activate" ]; then
+        source venv/bin/activate
+    fi
+
+    # Check if sample video exists or download one
+    SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
+    if [ ! -f "$SAMPLE_VIDEO" ]; then
+        echo -e "  Downloading sample avatar video..."
+        # Try to download from NewAvata releases or use a CC0 talking head video
+        python -c "
+import urllib.request
+import os
+
+output = '$SAMPLE_VIDEO'
+
+# Sample talking head videos (CC0 license)
+urls = [
+    'https://github.com/mindvridge/NewAvata/releases/download/v0.1/sample_avatar.mp4',
+    'https://huggingface.co/datasets/mindvridge/avatar-samples/resolve/main/sample_avatar.mp4',
+]
+
+downloaded = False
+for url in urls:
+    try:
+        print(f'  Trying: {url[:60]}...')
+        urllib.request.urlretrieve(url, output)
+        if os.path.getsize(output) > 100000:
+            print('  Sample video downloaded!')
+            downloaded = True
+            break
+    except Exception as e:
+        print(f'  Failed: {e}')
+
+if not downloaded:
+    print('  Could not download sample video')
+    print('  Please add your own video to: $NEWAVATA_APP_DIR/')
+" 2>/dev/null
+    fi
+
+    # Run precompute if sample video exists
+    if [ -f "$SAMPLE_VIDEO" ]; then
+        echo -e "  Running avatar precompute (this may take a few minutes)..."
+
+        # Check if precompute script exists
+        if [ -f "precompute.py" ]; then
+            python precompute.py --video "$SAMPLE_VIDEO" --output "$PRECOMPUTED_DIR/sample_avatar.pkl" 2>/dev/null && \
+                echo -e "  ${GREEN}Sample avatar precomputed!${NC}" || \
+                echo -e "  ${YELLOW}Precompute failed - will try at runtime${NC}"
+        elif [ -f "scripts/precompute.py" ]; then
+            python scripts/precompute.py --video "$SAMPLE_VIDEO" --output "$PRECOMPUTED_DIR/sample_avatar.pkl" 2>/dev/null && \
+                echo -e "  ${GREEN}Sample avatar precomputed!${NC}" || \
+                echo -e "  ${YELLOW}Precompute failed - will try at runtime${NC}"
+        else
+            echo -e "  ${YELLOW}Precompute script not found - avatar will be created at runtime${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}No sample video available${NC}"
+        echo -e "  ${CYAN}To add an avatar:${NC}"
+        echo -e "    1. Add a video file to: $NEWAVATA_APP_DIR/"
+        echo -e "    2. Run: python precompute.py --video your_video.mp4"
+    fi
+
+    # Deactivate venv
+    deactivate 2>/dev/null || true
+fi
+
+# Final avatar count
+AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
+if [ "$AVATAR_COUNT" -eq 0 ]; then
+    echo -e "  ${YELLOW}Note: NewAvata can create avatars on-the-fly from video${NC}"
+    echo -e "  ${CYAN}Use avatar_path='auto' in API calls${NC}"
 fi
 
 # Start both servers
