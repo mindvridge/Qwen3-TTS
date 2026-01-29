@@ -130,9 +130,10 @@ def generate_tts(text):
             f"{TTS_URL}/tts/voice_clone",
             json={
                 "text": text,
-                "speaker_audio": "https://github.com/QwenLM/Qwen3-TTS/raw/main/assets/input_audio.wav"
+                "ref_audio": "https://github.com/mindvridge/Qwen3-TTS/raw/main/sample(1).mp3",
+                "ref_text": "샘플 음성 참조 텍스트입니다."
             },
-            timeout=60
+            timeout=120
         )
 
         if r.status_code == 200:
