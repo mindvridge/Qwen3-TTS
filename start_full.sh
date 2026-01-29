@@ -1215,34 +1215,139 @@ NEWAVATA_SCRIPT
     fi
 
     # Wait for NewAvata to initialize and verify
-    echo -e "  Waiting for NewAvata to initialize (15s)..."
-    sleep 15
+    echo -e "  Waiting for NewAvata to initialize (30s)..."
+    sleep 30
 
     # Check if tmux session is still alive
+    NEWAVATA_OK=false
     if tmux has-session -t newavata 2>/dev/null; then
         echo -e "  ${GREEN}NewAvata tmux session is running${NC}"
 
         # Check if port 8001 is listening
+        PORT_LISTENING=false
         if command -v lsof &> /dev/null; then
             if lsof -i :8001 &>/dev/null; then
-                echo -e "  ${GREEN}Port 8001 is listening${NC}"
-            else
-                echo -e "  ${YELLOW}Port 8001 not yet listening (may still be starting)${NC}"
-                echo -e "  ${CYAN}Check logs: cat $NEWAVATA_LOG${NC}"
+                PORT_LISTENING=true
             fi
         elif command -v ss &> /dev/null; then
             if ss -tln | grep -q ":8001"; then
-                echo -e "  ${GREEN}Port 8001 is listening${NC}"
-            else
-                echo -e "  ${YELLOW}Port 8001 not yet listening (may still be starting)${NC}"
+                PORT_LISTENING=true
             fi
+        elif command -v netstat &> /dev/null; then
+            if netstat -tln | grep -q ":8001"; then
+                PORT_LISTENING=true
+            fi
+        fi
+
+        if [ "$PORT_LISTENING" = true ]; then
+            echo -e "  ${GREEN}Port 8001 is listening${NC}"
+
+            # Test health endpoint
+            echo -e "  Testing NewAvata health endpoint..."
+            HEALTH_RESPONSE=$(curl -s --max-time 10 http://localhost:8001/health 2>/dev/null || echo "FAILED")
+
+            if echo "$HEALTH_RESPONSE" | grep -qiE "ok|healthy|running|status"; then
+                echo -e "  ${GREEN}NewAvata health check: OK${NC}"
+                echo -e "  Response: $HEALTH_RESPONSE"
+                NEWAVATA_OK=true
+            else
+                echo -e "  ${RED}NewAvata health check: FAILED${NC}"
+                echo -e "  Response: $HEALTH_RESPONSE"
+            fi
+        else
+            echo -e "  ${YELLOW}Port 8001 not listening yet${NC}"
         fi
     else
         echo -e "  ${RED}NewAvata tmux session died!${NC}"
-        echo -e "  ${CYAN}Startup log:${NC}"
-        cat "$NEWAVATA_LOG" 2>/dev/null | head -30
-        echo -e "\n  ${YELLOW}Try running manually:${NC}"
-        echo -e "    cd $NEWAVATA_APP_DIR && source venv/bin/activate && python main.py"
+    fi
+
+    # If NewAvata failed, show detailed error logs
+    if [ "$NEWAVATA_OK" = false ]; then
+        echo ""
+        echo -e "  ${RED}========== NewAvata ERROR DETAILS ==========${NC}"
+        echo ""
+
+        # Show startup log
+        echo -e "  ${YELLOW}[1] Startup Log (/tmp/newavata_startup.log):${NC}"
+        if [ -f "/tmp/newavata_startup.log" ]; then
+            cat /tmp/newavata_startup.log | tail -50
+        else
+            echo "    (not found)"
+        fi
+        echo ""
+
+        # Show tmux output
+        echo -e "  ${YELLOW}[2] Tmux Session Output:${NC}"
+        if tmux has-session -t newavata 2>/dev/null; then
+            tmux capture-pane -t newavata -p | tail -50
+        else
+            echo "    (session not running)"
+        fi
+        echo ""
+
+        # Check for common errors
+        echo -e "  ${YELLOW}[3] Error Analysis:${NC}"
+        if [ -f "/tmp/newavata_startup.log" ]; then
+            if grep -q "IndentationError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}IndentationError detected - Python syntax error${NC}"
+                grep -A2 "IndentationError" /tmp/newavata_startup.log
+            fi
+            if grep -q "ModuleNotFoundError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}ModuleNotFoundError detected - Missing module${NC}"
+                grep "ModuleNotFoundError" /tmp/newavata_startup.log
+            fi
+            if grep -q "TypeError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}TypeError detected${NC}"
+                grep -B2 -A2 "TypeError" /tmp/newavata_startup.log | head -10
+            fi
+            if grep -q "FileNotFoundError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}FileNotFoundError detected - Missing file${NC}"
+                grep "FileNotFoundError" /tmp/newavata_startup.log
+            fi
+            if grep -q "EOFError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}EOFError detected - Corrupted model file${NC}"
+                grep -B2 "EOFError" /tmp/newavata_startup.log
+            fi
+        fi
+
+        # Check patched app.py for syntax errors
+        echo ""
+        echo -e "  ${YELLOW}[4] Checking patched app.py syntax:${NC}"
+        if [ -f "$NEWAVATA_APP_DIR/app.py" ]; then
+            cd "$NEWAVATA_APP_DIR"
+            if [ -f "venv/bin/activate" ]; then
+                source venv/bin/activate
+            fi
+            SYNTAX_CHECK=$(python -m py_compile app.py 2>&1)
+            if [ -z "$SYNTAX_CHECK" ]; then
+                echo -e "    ${GREEN}app.py syntax OK${NC}"
+            else
+                echo -e "    ${RED}app.py syntax ERROR:${NC}"
+                echo "$SYNTAX_CHECK"
+
+                # Show the problematic lines
+                echo ""
+                echo -e "    ${YELLOW}Problematic code section:${NC}"
+                # Extract line number from error
+                LINE_NUM=$(echo "$SYNTAX_CHECK" | grep -oP 'line \K[0-9]+' | head -1)
+                if [ -n "$LINE_NUM" ]; then
+                    START=$((LINE_NUM - 5))
+                    [ $START -lt 1 ] && START=1
+                    END=$((LINE_NUM + 5))
+                    sed -n "${START},${END}p" app.py | head -15
+                fi
+            fi
+            cd "$SCRIPT_DIR"
+        fi
+
+        echo ""
+        echo -e "  ${RED}========== END ERROR DETAILS ==========${NC}"
+        echo ""
+        echo -e "  ${YELLOW}To debug manually:${NC}"
+        echo -e "    tmux attach -t newavata"
+        echo -e "    # or"
+        echo -e "    cd $NEWAVATA_APP_DIR && source venv/bin/activate && python app.py"
+        echo ""
     fi
 
     # Start TTS server in foreground
