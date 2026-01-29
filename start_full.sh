@@ -439,6 +439,18 @@ except Exception as e:
         echo -e "    ${GREEN}SD-VAE model linked${NC}"
     fi
 
+    # musetalkV15 symlink (NewAvata app.py looks for models in ./models/musetalkV15/)
+    if [ -f "$MODELS_DIR/musetalk/pytorch_model.bin" ] && [ ! -d "$MODELS_DIR/musetalkV15" ]; then
+        echo -e "  ${YELLOW}Creating musetalkV15 symlinks...${NC}"
+        mkdir -p "$MODELS_DIR/musetalkV15"
+        ln -sf "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/pytorch_model.bin" 2>/dev/null || \
+            cp "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/pytorch_model.bin"
+        [ -f "$MODELS_DIR/musetalk/musetalk.json" ] && \
+            (ln -sf "$MODELS_DIR/musetalk/musetalk.json" "$MODELS_DIR/musetalkV15/musetalk.json" 2>/dev/null || \
+             cp "$MODELS_DIR/musetalk/musetalk.json" "$MODELS_DIR/musetalkV15/musetalk.json")
+        echo -e "    ${GREEN}musetalkV15 model linked${NC}"
+    fi
+
     echo -e "  ${GREEN}MuseTalk model symlinks configured${NC}"
 
     )  # End of subshell for model downloads
