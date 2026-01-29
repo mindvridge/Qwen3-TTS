@@ -252,6 +252,20 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                     **gen_kwargs,
                 )
 
+                # First sentence: regenerate for better voice cloning quality
+                # The model adapts better on second pass with same reference
+                if i == 0 and len(sentences) >= 1:
+                    print(f"[DEBUG] Regenerating first sentence for better voice quality...")
+                    wavs, sr = model.generate_voice_clone(
+                        text=sentence,
+                        language=request.language,
+                        ref_audio=request.ref_audio,
+                        ref_text=request.ref_text,
+                        x_vector_only_mode=request.x_vector_only_mode,
+                        non_streaming_mode=True,
+                        **gen_kwargs,
+                    )
+
                 # Each sentence returns a list of wavs, take the first one
                 if len(wavs) > 0:
                     all_wavs.append(wavs[0])
