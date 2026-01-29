@@ -218,14 +218,49 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # Option 2: Split into sentences (default behavior)
             sentences = split_into_sentences(input_text)
 
-            # Warmup: Generate a short phrase first to lock voice characteristics
-            # This helps the model adapt to the reference voice before actual content
-            if len(sentences) > 1:
-                warmup_text = request.ref_text[:50] if len(request.ref_text) > 20 else request.ref_text
-                print(f"[DEBUG] Warmup generation with ref_text: '{warmup_text[:30]}...'")
-                try:
-                    _, _ = model.generate_voice_clone(
-                        text=warmup_text,
+            # ROOT CAUSE FIX: Pre-compute voice clone prompt once
+            # This extracts speaker embedding (x-vector) and reference speech codes
+            # in a single pass, ensuring consistent voice characteristics across all sentences.
+            #
+            # Why this fixes the first sentence issue:
+            # - Speaker embedding is computed once and cached
+            # - ICL (In-Context Learning) codes are extracted once from reference
+            # - All sentences use the same pre-computed voice features
+            # - Eliminates per-sentence embedding extraction inconsistency
+            print(f"[DEBUG] Pre-computing voice clone prompt (speaker embedding + ICL codes)...")
+            try:
+                voice_clone_prompt = model.create_voice_clone_prompt(
+                    ref_audio=request.ref_audio,
+                    ref_text=request.ref_text,
+                    target_language=request.language,
+                    x_vector_only_mode=request.x_vector_only_mode,
+                )
+                print(f"[DEBUG] Voice clone prompt created successfully")
+                use_precomputed_prompt = True
+            except Exception as e:
+                print(f"[DEBUG] Failed to create voice clone prompt: {e}")
+                print(f"[DEBUG] Falling back to per-sentence mode")
+                voice_clone_prompt = None
+                use_precomputed_prompt = False
+
+            # Generate each sentence separately
+            all_wavs = []
+            for i, sentence in enumerate(sentences):
+                print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
+
+                if use_precomputed_prompt:
+                    # Use pre-computed voice clone prompt (fundamental fix)
+                    wavs, sr = model.generate_voice_clone(
+                        text=sentence,
+                        language=request.language,
+                        voice_clone_prompt=voice_clone_prompt,  # Pre-computed prompt
+                        non_streaming_mode=True,
+                        **gen_kwargs,
+                    )
+                else:
+                    # Fallback: per-sentence extraction
+                    wavs, sr = model.generate_voice_clone(
+                        text=sentence,
                         language=request.language,
                         ref_audio=request.ref_audio,
                         ref_text=request.ref_text,
@@ -233,42 +268,6 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                         non_streaming_mode=True,
                         **gen_kwargs,
                     )
-                    print(f"[DEBUG] Warmup complete - voice characteristics locked")
-                except Exception as e:
-                    print(f"[DEBUG] Warmup failed (non-critical): {e}")
-
-            # Voice cloning primer settings
-            # Adding a short filler before first sentence helps model adapt to voice
-            PRIMER_TEXT = "음, "  # Short filler that will be trimmed
-            PRIMER_DURATION_SEC = 0.35  # Approximate duration to trim (in seconds)
-
-            # Generate each sentence separately
-            all_wavs = []
-            for i, sentence in enumerate(sentences):
-                # For first sentence, add primer to help voice adaptation
-                if i == 0:
-                    primed_sentence = PRIMER_TEXT + sentence
-                    print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)} (with primer): '{primed_sentence[:50]}...'")
-                else:
-                    primed_sentence = sentence
-                    print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
-
-                wavs, sr = model.generate_voice_clone(
-                    text=primed_sentence,
-                    language=request.language,
-                    ref_audio=request.ref_audio,
-                    ref_text=request.ref_text,
-                    x_vector_only_mode=request.x_vector_only_mode,
-                    non_streaming_mode=True,  # Use non-streaming for single sentences
-                    **gen_kwargs,
-                )
-
-                # For first sentence, trim the primer audio from the beginning
-                if i == 0 and len(wavs) > 0:
-                    trim_samples = int(PRIMER_DURATION_SEC * sr)
-                    if len(wavs[0]) > trim_samples + sr:  # Ensure we have enough audio
-                        wavs[0] = wavs[0][trim_samples:]
-                        print(f"[DEBUG]   Trimmed {PRIMER_DURATION_SEC}s primer from first sentence")
 
                 # Each sentence returns a list of wavs, take the first one
                 if len(wavs) > 0:
