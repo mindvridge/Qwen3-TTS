@@ -69,14 +69,43 @@ fi
 echo -e "\n${YELLOW}[2/7] Setting up Qwen3-TTS...${NC}"
 cd "$SCRIPT_DIR"
 
-# Install TTS dependencies
-if [ ! -f ".tts_deps_installed" ]; then
-    echo -e "  Installing TTS dependencies..."
-    pip install -r requirements.txt --quiet --disable-pip-version-check 2>/dev/null
-    touch .tts_deps_installed
-    echo -e "  ${GREEN}TTS dependencies installed${NC}"
+# Install TTS dependencies (verify fastapi is actually installed)
+FASTAPI_OK=false
+if python -c "import fastapi" 2>/dev/null; then
+    FASTAPI_OK=true
+fi
+
+if [ ! -f ".tts_deps_installed" ] || [ "$FASTAPI_OK" = false ]; then
+    if [ "$FASTAPI_OK" = false ]; then
+        echo -e "  ${YELLOW}fastapi not found, reinstalling dependencies...${NC}"
+        rm -f .tts_deps_installed
+    else
+        echo -e "  Installing TTS dependencies..."
+    fi
+
+    # Install with verbose output to catch errors
+    pip install -r requirements.txt --disable-pip-version-check 2>&1 | tail -5
+
+    # Verify installation
+    if python -c "import fastapi; import uvicorn; import torch" 2>/dev/null; then
+        touch .tts_deps_installed
+        echo -e "  ${GREEN}TTS dependencies installed and verified${NC}"
+    else
+        echo -e "  ${RED}Dependency installation failed!${NC}"
+        echo -e "  ${YELLOW}Trying individual packages...${NC}"
+        pip install fastapi uvicorn python-dotenv soundfile numpy --quiet
+        pip install torch --quiet
+
+        if python -c "import fastapi" 2>/dev/null; then
+            touch .tts_deps_installed
+            echo -e "  ${GREEN}Core dependencies installed${NC}"
+        else
+            echo -e "  ${RED}FATAL: Cannot install fastapi. Check pip and network.${NC}"
+            exit 1
+        fi
+    fi
 else
-    echo -e "  ${GREEN}TTS dependencies already installed${NC}"
+    echo -e "  ${GREEN}TTS dependencies verified (fastapi OK)${NC}"
 fi
 
 # Install Flash Attention
@@ -178,14 +207,17 @@ fi
 # Fix missing models (MuseTalk, FaceParse)
 echo -e "\n${YELLOW}[5.5/7] Checking and fixing missing models...${NC}"
 if [ -d "$NEWAVATA_APP_DIR" ]; then
-    cd "$NEWAVATA_APP_DIR"
+    # Run in subshell to isolate venv activation
+    (
+        cd "$NEWAVATA_APP_DIR"
 
-    # Activate venv if exists
-    if [ -f "venv/bin/activate" ]; then
-        source venv/bin/activate
-    fi
+        # Activate venv if exists
+        if [ -f "venv/bin/activate" ]; then
+            source venv/bin/activate
+            echo -e "  ${GREEN}Activated NewAvata venv for model download${NC}"
+        fi
 
-    MODELS_DIR="$NEWAVATA_APP_DIR/models"
+        MODELS_DIR="$NEWAVATA_APP_DIR/models"
 
     # Fix 1: MuseTalk model (pytorch_model.bin + musetalk.json)
     MUSETALK_MODEL="$MODELS_DIR/musetalk/pytorch_model.bin"
@@ -319,8 +351,8 @@ except Exception as e:
         echo -e "  ${GREEN}SD-VAE model already exists${NC}"
     fi
 
-    # Deactivate venv
-    deactivate 2>/dev/null || true
+    )  # End of subshell for model downloads
+    echo -e "  ${GREEN}Model check subshell completed${NC}"
 fi
 
 # Setup NewAvata precomputed avatars
@@ -340,75 +372,78 @@ if [ "$AVATAR_COUNT" -gt 0 ]; then
 else
     echo -e "  ${YELLOW}No precomputed avatars found. Generating from assets/...${NC}"
 
-    cd "$NEWAVATA_APP_DIR"
+    # Run precompute in a subshell to isolate environment changes
+    (
+        cd "$NEWAVATA_APP_DIR"
 
-    # Activate venv
-    if [ -f "venv/bin/activate" ]; then
-        source venv/bin/activate
-    fi
+        # Activate NewAvata venv
+        if [ -f "venv/bin/activate" ]; then
+            source venv/bin/activate
+            echo -e "  ${GREEN}Activated NewAvata venv for precompute${NC}"
+        fi
 
-    # Check assets/ folder for source videos (pushed to GitHub ~36MB)
-    if [ -d "$ASSETS_DIR" ]; then
-        VIDEO_COUNT=$(ls -1 "$ASSETS_DIR/"*.mp4 2>/dev/null | wc -l)
-        if [ "$VIDEO_COUNT" -gt 0 ]; then
-            echo -e "  Found ${CYAN}$VIDEO_COUNT${NC} video(s) in assets/"
-            echo -e "  ${YELLOW}Generating precomputed avatars (3.9GB total, may take 5-10 min)...${NC}"
+        # Check assets/ folder for source videos (pushed to GitHub ~36MB)
+        if [ -d "$ASSETS_DIR" ]; then
+            VIDEO_COUNT=$(ls -1 "$ASSETS_DIR/"*.mp4 2>/dev/null | wc -l)
+            if [ "$VIDEO_COUNT" -gt 0 ]; then
+                echo -e "  Found ${CYAN}$VIDEO_COUNT${NC} video(s) in assets/"
+                echo -e "  ${YELLOW}Generating precomputed avatars (3.9GB total, may take 5-10 min)...${NC}"
 
-            # Find precompute script (NewAvata uses scripts/precompute_avatar.py)
-            PRECOMPUTE_SCRIPT=""
-            if [ -f "scripts/precompute_avatar.py" ]; then
-                PRECOMPUTE_SCRIPT="scripts/precompute_avatar.py"
-            elif [ -f "precompute.py" ]; then
-                PRECOMPUTE_SCRIPT="precompute.py"
-            elif [ -f "scripts/precompute.py" ]; then
-                PRECOMPUTE_SCRIPT="scripts/precompute.py"
-            fi
-
-            if [ -n "$PRECOMPUTE_SCRIPT" ]; then
-                # Set PYTHONPATH to include MuseTalk module
-                MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
-                if [ -d "$MUSETALK_PATH" ]; then
-                    export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
-                    echo -e "  ${GREEN}PYTHONPATH set to include MuseTalk${NC}"
+                # Find precompute script (NewAvata uses scripts/precompute_avatar.py)
+                PRECOMPUTE_SCRIPT=""
+                if [ -f "scripts/precompute_avatar.py" ]; then
+                    PRECOMPUTE_SCRIPT="scripts/precompute_avatar.py"
+                elif [ -f "precompute.py" ]; then
+                    PRECOMPUTE_SCRIPT="precompute.py"
+                elif [ -f "scripts/precompute.py" ]; then
+                    PRECOMPUTE_SCRIPT="scripts/precompute.py"
                 fi
 
-                # Process each video in assets/
-                for video in "$ASSETS_DIR"/*.mp4; do
-                    if [ -f "$video" ]; then
-                        basename=$(basename "$video" .mp4)
-                        output_pkl="$PRECOMPUTED_DIR/${basename}.pkl"
-
-                        if [ ! -f "$output_pkl" ]; then
-                            echo -e "    Processing: ${CYAN}$basename${NC}..."
-                            python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>&1 | tail -5
-                            if [ -f "$output_pkl" ]; then
-                                echo -e "    ${GREEN}✓ $basename precomputed${NC}"
-                            else
-                                echo -e "    ${YELLOW}✗ $basename failed${NC}"
-                            fi
-                        else
-                            echo -e "    ${GREEN}✓ $basename already exists${NC}"
-                        fi
+                if [ -n "$PRECOMPUTE_SCRIPT" ]; then
+                    # Set PYTHONPATH to include MuseTalk module
+                    MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
+                    if [ -d "$MUSETALK_PATH" ]; then
+                        export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
+                        echo -e "  ${GREEN}PYTHONPATH set to include MuseTalk${NC}"
                     fi
-                done
+
+                    # Process each video in assets/
+                    for video in "$ASSETS_DIR"/*.mp4; do
+                        if [ -f "$video" ]; then
+                            basename=$(basename "$video" .mp4)
+                            output_pkl="$PRECOMPUTED_DIR/${basename}.pkl"
+
+                            if [ ! -f "$output_pkl" ]; then
+                                echo -e "    Processing: ${CYAN}$basename${NC}..."
+                                python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>&1 | tail -5
+                                if [ -f "$output_pkl" ]; then
+                                    echo -e "    ${GREEN}✓ $basename precomputed${NC}"
+                                else
+                                    echo -e "    ${YELLOW}✗ $basename failed${NC}"
+                                fi
+                            else
+                                echo -e "    ${GREEN}✓ $basename already exists${NC}"
+                            fi
+                        fi
+                    done
+                else
+                    echo -e "  ${YELLOW}Precompute script not found${NC}"
+                    echo -e "  ${CYAN}Try running MuseTalk preprocessing manually:${NC}"
+                    echo -e "    cd MuseTalk && python scripts/preprocess.py --video_path ../assets/your_video.mp4"
+                fi
             else
-                echo -e "  ${YELLOW}Precompute script not found${NC}"
-                echo -e "  ${CYAN}Try running MuseTalk preprocessing manually:${NC}"
-                echo -e "    cd MuseTalk && python scripts/preprocess.py --video_path ../assets/your_video.mp4"
+                echo -e "  ${YELLOW}No videos found in assets/${NC}"
             fi
         else
-            echo -e "  ${YELLOW}No videos found in assets/${NC}"
+            echo -e "  ${YELLOW}assets/ folder not found${NC}"
         fi
-    else
-        echo -e "  ${YELLOW}assets/ folder not found${NC}"
-    fi
 
-    # Fallback: download sample if no assets
-    if [ ! -d "$ASSETS_DIR" ] || [ "$(ls -1 "$ASSETS_DIR"/*.mp4 2>/dev/null | wc -l)" -eq 0 ]; then
-        SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
-        if [ ! -f "$SAMPLE_VIDEO" ]; then
-            echo -e "  Downloading sample avatar video..."
-            python -c "
+        # Fallback: download sample if no assets
+        if [ ! -d "$ASSETS_DIR" ] || [ "$(ls -1 "$ASSETS_DIR"/*.mp4 2>/dev/null | wc -l)" -eq 0 ]; then
+            SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
+            if [ ! -f "$SAMPLE_VIDEO" ]; then
+                echo -e "  Downloading sample avatar video..."
+                python -c "
 import urllib.request
 import os
 
@@ -428,11 +463,10 @@ for url in urls:
     except Exception as e:
         print(f'  Failed: {e}')
 " 2>/dev/null
+            fi
         fi
-    fi
-
-    # Deactivate venv
-    deactivate 2>/dev/null || true
+    )  # End of subshell - venv and PYTHONPATH changes are isolated
+    echo -e "  ${GREEN}Precompute subshell completed${NC}"
 fi
 
 # Final avatar count and TensorRT note
@@ -539,6 +573,26 @@ NEWAVATA_SCRIPT
 
     # Start TTS server in foreground
     cd "$SCRIPT_DIR"
+
+    # Ensure we're using system Python (not NewAvata venv)
+    # Force deactivate any active venv
+    deactivate 2>/dev/null || true
+    unset VIRTUAL_ENV 2>/dev/null || true
+
+    # Verify TTS environment before starting
+    echo -e "\n  ${CYAN}Verifying TTS environment...${NC}"
+    if ! python -c "import fastapi" 2>/dev/null; then
+        echo -e "  ${YELLOW}fastapi missing after NewAvata setup, reinstalling...${NC}"
+        pip install -r requirements.txt --quiet 2>/dev/null
+    fi
+
+    if python -c "import fastapi; import torch; print('OK')" 2>/dev/null | grep -q "OK"; then
+        echo -e "  ${GREEN}TTS environment OK${NC}"
+    else
+        echo -e "  ${RED}TTS environment broken! Attempting repair...${NC}"
+        pip install fastapi uvicorn torch soundfile numpy python-dotenv --quiet
+    fi
+
     echo ""
     echo "==========================================="
     echo -e "  ${GREEN}Full Stack Ready!${NC}"
@@ -591,6 +645,25 @@ else
 
     # Start TTS server
     cd "$SCRIPT_DIR"
+
+    # Ensure we're using system Python (not NewAvata venv)
+    deactivate 2>/dev/null || true
+    unset VIRTUAL_ENV 2>/dev/null || true
+
+    # Verify TTS environment before starting
+    echo -e "\n  ${CYAN}Verifying TTS environment...${NC}"
+    if ! python -c "import fastapi" 2>/dev/null; then
+        echo -e "  ${YELLOW}fastapi missing, reinstalling...${NC}"
+        pip install -r requirements.txt --quiet 2>/dev/null
+    fi
+
+    if python -c "import fastapi; import torch; print('OK')" 2>/dev/null | grep -q "OK"; then
+        echo -e "  ${GREEN}TTS environment OK${NC}"
+    else
+        echo -e "  ${RED}TTS environment broken! Attempting repair...${NC}"
+        pip install fastapi uvicorn torch soundfile numpy python-dotenv --quiet
+    fi
+
     echo ""
     echo "==========================================="
     echo -e "  ${GREEN}Full Stack Ready!${NC}"
