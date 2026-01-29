@@ -486,15 +486,19 @@ if ! validate_faceparse "$FACEPARSE_MODEL"; then
     rm -f "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
     mkdir -p "$(dirname $FACEPARSE_MODEL)" "$(dirname $FACEPARSE_SYMLINK)"
 
+    # Export FACEPARSE_MODEL before heredoc so Python can read it
+    export FACEPARSE_MODEL
+
     python3 << 'DOWNLOAD_FACEPARSE'
 import os
 import shutil
 import torch
-import urllib.request
 
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
 os.makedirs(os.path.dirname(output), exist_ok=True)
+
+print(f'  Target path: {output}')
 
 # HuggingFace sources (verified working as of Jan 2026)
 sources = [
@@ -520,13 +524,14 @@ try:
             if os.path.exists(output):
                 os.remove(output)
 except ImportError:
-    pass
+    print('  ERROR: huggingface_hub not available')
 
 exit(0 if downloaded else 1)
 DOWNLOAD_FACEPARSE
 
-    export FACEPARSE_MODEL
-    if [ $? -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+    # Save exit code immediately (before any other command)
+    DOWNLOAD_RESULT=$?
+    if [ $DOWNLOAD_RESULT -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
         echo -e "  ${GREEN}FaceParse model downloaded and validated${NC}"
         # Create symlink
         ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
@@ -556,11 +561,12 @@ if [ "$MODELS_VALID" = false ]; then
 import os
 import shutil
 import torch
-import urllib.request
 
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
 os.makedirs(os.path.dirname(output), exist_ok=True)
+
+print(f'  Target path: {output}')
 
 # HuggingFace sources (verified working as of Jan 2026)
 sources = [
@@ -575,7 +581,7 @@ try:
     for repo_id, filename in sources:
         try:
             print(f'  Trying HuggingFace: {repo_id}')
-            path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
             shutil.copy(path, output)
             torch.load(output, map_location='cpu', weights_only=False)
             print(f'  SUCCESS from {repo_id}')
@@ -586,13 +592,14 @@ try:
             if os.path.exists(output):
                 os.remove(output)
 except ImportError:
-    pass
+    print('  ERROR: huggingface_hub not available')
 
 exit(0 if downloaded else 1)
 RETRY_DOWNLOAD
 
-        export FACEPARSE_MODEL
-        if [ $? -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+        # Save exit code immediately (before any other command)
+        RETRY_RESULT=$?
+        if [ $RETRY_RESULT -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
             echo -e "  ${GREEN}FaceParse model downloaded successfully on retry $retry${NC}"
             ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
                 cp "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
@@ -652,10 +659,13 @@ if [ "$NEED_FIX" = true ]; then
 import os
 import shutil
 import torch
-import urllib.request
 
 musetalk_path = os.path.expanduser('~/NewAvata/MuseTalk/models/face-parse-bisent/79999_iter.pth')
 newavata_path = os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth')
+
+print(f'  Target paths:')
+print(f'    MuseTalk: {musetalk_path}')
+print(f'    NewAvata: {newavata_path}')
 
 os.makedirs(os.path.dirname(musetalk_path), exist_ok=True)
 os.makedirs(os.path.dirname(newavata_path), exist_ok=True)
@@ -667,13 +677,12 @@ sources = [
     ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
-downloaded = False
 try:
     from huggingface_hub import hf_hub_download
     for repo_id, filename in sources:
         try:
             print(f'  Trying HuggingFace: {repo_id}...')
-            path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
             shutil.copy(path, musetalk_path)
             shutil.copy(path, newavata_path)
 
@@ -691,7 +700,7 @@ try:
                 if os.path.exists(p):
                     os.remove(p)
 except ImportError:
-    pass
+    print('  ERROR: huggingface_hub not available')
 
 print('  ERROR: Could not download valid FaceParse model')
 exit(1)

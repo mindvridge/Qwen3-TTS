@@ -38,15 +38,21 @@ fi
 echo -e "\n${CYAN}[3/4] Downloading FaceParse model...${NC}"
 mkdir -p "$(dirname $FACEPARSE_MODEL)"
 
+# Export FACEPARSE_MODEL before heredoc so Python can read it
+export FACEPARSE_MODEL
+
 python3 << 'PYTHON_SCRIPT'
 import os
 import shutil
 import torch
-import urllib.request
 
 output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
 musetalk_output = os.path.expanduser('~/NewAvata/MuseTalk/models/face-parse-bisent/79999_iter.pth')
+
+print(f'  Target paths:')
+print(f'    NewAvata: {output}')
+print(f'    MuseTalk: {musetalk_output}')
 
 os.makedirs(os.path.dirname(output), exist_ok=True)
 os.makedirs(os.path.dirname(musetalk_output), exist_ok=True)
@@ -80,7 +86,7 @@ try:
             if os.path.exists(output):
                 os.remove(output)
 except ImportError:
-    print('  huggingface_hub not available')
+    print('  ERROR: huggingface_hub not available')
 
 if downloaded:
     # Copy to MuseTalk location too
@@ -93,8 +99,9 @@ else:
     exit(1)
 PYTHON_SCRIPT
 
-export FACEPARSE_MODEL
-if [ $? -eq 0 ]; then
+# Save exit code immediately (before any other command)
+DOWNLOAD_RESULT=$?
+if [ $DOWNLOAD_RESULT -eq 0 ]; then
     echo -e "${GREEN}Download successful${NC}"
 else
     echo -e "${YELLOW}Download failed${NC}"
