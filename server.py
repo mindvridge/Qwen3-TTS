@@ -203,8 +203,8 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             sentence_count = len(sentences)
 
             if request.split_sentences is None:
-                # Auto-detect: split only if text is long (>200 chars) or has many sentences (>3)
-                should_split = text_length > 200 or sentence_count > 3
+                # Auto-detect: split only if text is very long (>500 chars) or has many sentences (>5)
+                should_split = text_length > 500 or sentence_count > 5
                 print(f"[DEBUG] Auto-detect: text_length={text_length}, sentences={sentence_count} -> split={should_split}")
             else:
                 should_split = request.split_sentences
@@ -213,15 +213,63 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # Option 1: Generate as single block (no sentence splitting)
             if not should_split:
                 print(f"[DEBUG] Generating as single block (no sentence split)")
-                wavs, sr = model.generate_voice_clone(
-                    text=input_text,
-                    language=request.language,
-                    ref_audio=request.ref_audio,
-                    ref_text=request.ref_text,
-                    x_vector_only_mode=request.x_vector_only_mode,
-                    non_streaming_mode=True,
-                    **gen_kwargs,
-                )
+                print(f"[DEBUG] ref_audio: {request.ref_audio}")
+                print(f"[DEBUG] ref_text: {request.ref_text}")
+
+                # Force x_vector_only_mode=True for stable voice cloning
+                # ICL mode (x_vector_only_mode=False) can be unstable
+                use_x_vector_only = True
+                print(f"[DEBUG] x_vector_only_mode: {use_x_vector_only} (forced for stability)")
+
+                # Pre-compute voice clone prompt for consistent voice cloning
+                # This extracts speaker embedding (x-vector) and reference speech codes
+                print(f"[DEBUG] Pre-computing voice clone prompt for single block...")
+                try:
+                    voice_clone_prompt = model.create_voice_clone_prompt(
+                        ref_audio=request.ref_audio,
+                        ref_text=request.ref_text,
+                        x_vector_only_mode=use_x_vector_only,
+                    )
+
+                    if voice_clone_prompt and len(voice_clone_prompt) > 0:
+                        prompt_item = voice_clone_prompt[0]
+                        if hasattr(prompt_item, 'ref_spk_embedding') and prompt_item.ref_spk_embedding is not None:
+                            emb_shape = prompt_item.ref_spk_embedding.shape
+                            print(f"[DEBUG] Voice clone prompt created:")
+                            print(f"[DEBUG]   - Speaker embedding shape: {emb_shape}")
+                            print(f"[DEBUG]   - x_vector_only_mode: {prompt_item.x_vector_only_mode}")
+                            print(f"[DEBUG]   - icl_mode: {prompt_item.icl_mode}")
+                            print(f"[DEBUG]   - ref_code: {'present' if prompt_item.ref_code is not None else 'None'}")
+
+                            # Generate with pre-computed voice clone prompt
+                            wavs, sr = model.generate_voice_clone(
+                                text=input_text,
+                                language=request.language,
+                                voice_clone_prompt=voice_clone_prompt,
+                                non_streaming_mode=True,
+                                **gen_kwargs,
+                            )
+                        else:
+                            raise ValueError("Voice clone prompt has no speaker embedding")
+                    else:
+                        raise ValueError("Voice clone prompt is empty")
+
+                except Exception as e:
+                    print(f"[DEBUG] WARNING: Failed to create voice clone prompt: {e}")
+                    print(f"[DEBUG] Falling back to direct ref_audio mode")
+                    import traceback
+                    traceback.print_exc()
+
+                    # Fallback: direct ref_audio mode (less reliable)
+                    wavs, sr = model.generate_voice_clone(
+                        text=input_text,
+                        language=request.language,
+                        ref_audio=request.ref_audio,
+                        ref_text=request.ref_text,
+                        x_vector_only_mode=use_x_vector_only,
+                        non_streaming_mode=True,
+                        **gen_kwargs,
+                    )
 
                 torch.cuda.synchronize()
                 gen_time = time.time() - t0
@@ -231,25 +279,27 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # Option 2: Split into sentences (for long text)
             print(f"[DEBUG] Splitting into {sentence_count} sentences for long text")
 
+            # Force x_vector_only_mode=True for stable voice cloning
+            use_x_vector_only = True
+            print(f"[DEBUG] x_vector_only_mode: {use_x_vector_only} (forced for stability)")
+
             # ROOT CAUSE FIX: Pre-compute voice clone prompt once
             # This extracts speaker embedding (x-vector) and reference speech codes
             # in a single pass, ensuring consistent voice characteristics across all sentences.
             #
             # Why this fixes the first sentence issue:
             # - Speaker embedding is computed once and cached
-            # - ICL (In-Context Learning) codes are extracted once from reference
             # - All sentences use the same pre-computed voice features
             # - Eliminates per-sentence embedding extraction inconsistency
-            print(f"[DEBUG] Pre-computing voice clone prompt (speaker embedding + ICL codes)...")
+            print(f"[DEBUG] Pre-computing voice clone prompt (speaker embedding)...")
             voice_clone_prompt = None
             use_precomputed_prompt = False
 
             try:
-                # create_voice_clone_prompt signature: (ref_audio, ref_text=None, x_vector_only_mode=False)
                 voice_clone_prompt = model.create_voice_clone_prompt(
                     ref_audio=request.ref_audio,
                     ref_text=request.ref_text,
-                    x_vector_only_mode=request.x_vector_only_mode,
+                    x_vector_only_mode=use_x_vector_only,
                 )
 
                 # Validate the prompt was created correctly
@@ -318,7 +368,7 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                         language=request.language,
                         ref_audio=request.ref_audio,
                         ref_text=request.ref_text,
-                        x_vector_only_mode=request.x_vector_only_mode,
+                        x_vector_only_mode=use_x_vector_only,
                         non_streaming_mode=True,
                         **gen_kwargs,
                     )

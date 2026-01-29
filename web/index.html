@@ -463,7 +463,7 @@
                         language,
                         ref_audio: voice.refAudio,
                         ref_text: voice.refText,
-                        x_vector_only_mode: voice.refText.trim() === ''
+                        x_vector_only_mode: true  // Always use x-vector only mode for stable voice cloning
                     })
                 });
 
@@ -522,7 +522,7 @@
                         language,
                         ref_audio: voice.refAudio,
                         ref_text: voice.refText,
-                        x_vector_only_mode: voice.refText.trim() === ''
+                        x_vector_only_mode: true  // Always use x-vector only mode for stable voice cloning
                     }),
                     signal: streamAbortController.signal
                 });

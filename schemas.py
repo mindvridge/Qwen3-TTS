@@ -23,7 +23,7 @@ class VoiceCloneRequest(BaseModel):
     language: Union[str, List[str]] = Field(default="Auto", description="Language")
     ref_audio: Union[str, List[str]] = Field(..., description="Reference audio path or URL")
     ref_text: Union[str, List[str]] = Field(..., description="Reference audio transcript")
-    x_vector_only_mode: bool = Field(default=False, description="Use x-vector only mode")
+    x_vector_only_mode: bool = Field(default=True, description="Use x-vector only mode (recommended for stable voice cloning)")
     split_sentences: Optional[bool] = Field(default=None, description="Split text into sentences (None = auto-detect, True = always split, False = never split)")
     seed: Optional[int] = Field(default=None, description="Random seed for reproducible output (None = auto-generate)")
     generation_params: Optional[GenerationParams] = None

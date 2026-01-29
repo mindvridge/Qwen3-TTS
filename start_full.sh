@@ -236,7 +236,19 @@ if [ -d "$NEWAVATA_APP_DIR" ]; then
     # Fix 1: MuseTalk model (pytorch_model.bin + musetalk.json)
     MUSETALK_MODEL="$MODELS_DIR/musetalk/pytorch_model.bin"
     MUSETALK_JSON="$MODELS_DIR/musetalk/musetalk.json"
+    NEED_MUSETALK=false
+
+    # Check if models exist and are valid (pytorch_model.bin should be >1GB)
     if [ ! -f "$MUSETALK_MODEL" ] || [ ! -f "$MUSETALK_JSON" ]; then
+        NEED_MUSETALK=true
+        echo -e "  MuseTalk model not found, downloading..."
+    elif [ $(stat -c%s "$MUSETALK_MODEL" 2>/dev/null || stat -f%z "$MUSETALK_MODEL" 2>/dev/null || echo 0) -lt 1000000000 ]; then
+        echo -e "  ${YELLOW}MuseTalk model corrupted (too small), re-downloading...${NC}"
+        rm -f "$MUSETALK_MODEL" "$MUSETALK_JSON"
+        NEED_MUSETALK=true
+    fi
+
+    if [ "$NEED_MUSETALK" = true ]; then
         echo -e "  Downloading MuseTalk model files..."
         mkdir -p "$MODELS_DIR/musetalk"
         python -c "
@@ -276,13 +288,40 @@ if not os.path.exists(json_file):
         print(f'  Warning: musetalk.json download failed: {e}')
 " 2>/dev/null && echo -e "  ${GREEN}MuseTalk model downloaded${NC}" || echo -e "  ${YELLOW}MuseTalk model download skipped${NC}"
     else
-        echo -e "  ${GREEN}MuseTalk model already exists${NC}"
+        echo -e "  ${GREEN}MuseTalk model already exists (valid)${NC}"
     fi
 
     # Fix 2: FaceParse BiSeNet model (79999_iter.pth)
     FACEPARSE_MODEL="$MODELS_DIR/face-parse-bisent/79999_iter.pth"
+    NEED_DOWNLOAD=false
+
+    # Check if file exists, has valid size (>1MB), and can be loaded by torch
     if [ ! -f "$FACEPARSE_MODEL" ]; then
-        echo -e "  Downloading FaceParse model..."
+        NEED_DOWNLOAD=true
+        echo -e "  FaceParse model not found, downloading..."
+    elif [ $(stat -c%s "$FACEPARSE_MODEL" 2>/dev/null || stat -f%z "$FACEPARSE_MODEL" 2>/dev/null || echo 0) -lt 1000000 ]; then
+        echo -e "  ${YELLOW}FaceParse model corrupted (too small), re-downloading...${NC}"
+        rm -f "$FACEPARSE_MODEL"
+        NEED_DOWNLOAD=true
+    else
+        # Validate by actually loading with torch (catches pickle corruption)
+        echo -e "  Validating FaceParse model with torch.load..."
+        if ! python -c "
+import torch
+try:
+    torch.load('$FACEPARSE_MODEL', map_location='cpu', weights_only=False)
+    print('  FaceParse model validation: OK')
+except Exception as e:
+    print(f'  FaceParse model validation FAILED: {e}')
+    exit(1)
+" 2>/dev/null; then
+            echo -e "  ${YELLOW}FaceParse model corrupted (torch.load failed), re-downloading...${NC}"
+            rm -f "$FACEPARSE_MODEL"
+            NEED_DOWNLOAD=true
+        fi
+    fi
+
+    if [ "$NEED_DOWNLOAD" = true ]; then
         mkdir -p "$MODELS_DIR/face-parse-bisent"
 
         # Download using Python with multiple fallback URLs
@@ -290,12 +329,17 @@ if not os.path.exists(json_file):
 import os
 import urllib.request
 from huggingface_hub import hf_hub_download
+import shutil
 
 output = '$FACEPARSE_MODEL'
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
-# Method 1: Try HuggingFace alternatives
+# Method 1: Try HuggingFace sources (in order of reliability)
 hf_sources = [
+    # Primary: camenduru/MuseTalk - verified MuseTalk models repo
+    ('camenduru/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+    # Fallback sources
+    ('TMElyralab/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
     ('gwang-kim/datid3d-finetuned-eg3d-car', 'face_parsing/79999_iter.pth'),
     ('h94/IP-Adapter-FaceID', 'models/parsing_model/79999_iter.pth'),
 ]
@@ -305,7 +349,6 @@ for repo_id, filename in hf_sources:
     try:
         print(f'  Trying HuggingFace: {repo_id}')
         path = hf_hub_download(repo_id=repo_id, filename=filename)
-        import shutil
         shutil.copy(path, output)
         if os.path.getsize(output) > 1000000:
             print(f'  Success from {repo_id}!')
@@ -318,6 +361,7 @@ for repo_id, filename in hf_sources:
 # Method 2: Try direct URLs
 if not downloaded:
     urls = [
+        'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
         'https://drive.usercontent.google.com/download?id=154JgKpzCPW82qINcVieuPH3fZ2e0P812&confirm=t',
     ]
     for url in urls:
@@ -333,15 +377,38 @@ if not downloaded:
 
 if not downloaded:
     print('  Warning: Could not download FaceParse model')
+else:
+    # Validate downloaded file
+    print('  Validating downloaded model...')
+    import torch
+    try:
+        torch.load(output, map_location='cpu', weights_only=False)
+        print('  Download validation: OK')
+    except Exception as e:
+        print(f'  Download validation FAILED: {e}')
+        os.remove(output)
+        print('  Corrupted download removed. Please re-run the script.')
 " 2>/dev/null && echo -e "  ${GREEN}FaceParse model downloaded${NC}" || echo -e "  ${YELLOW}FaceParse model download skipped${NC}"
     else
-        echo -e "  ${GREEN}FaceParse model already exists${NC}"
+        echo -e "  ${GREEN}FaceParse model already exists (valid)${NC}"
     fi
 
     # Fix 3: SD-VAE model (required for MuseTalk VAE)
-    SDVAE_MODEL="$MODELS_DIR/sd-vae/config.json"
-    if [ ! -f "$SDVAE_MODEL" ]; then
-        echo -e "  Downloading SD-VAE model..."
+    SDVAE_CONFIG="$MODELS_DIR/sd-vae/config.json"
+    SDVAE_BIN="$MODELS_DIR/sd-vae/diffusion_pytorch_model.bin"
+    NEED_SDVAE=false
+
+    # Check if models exist and diffusion_pytorch_model.bin is valid (>100MB)
+    if [ ! -f "$SDVAE_CONFIG" ] || [ ! -f "$SDVAE_BIN" ]; then
+        NEED_SDVAE=true
+        echo -e "  SD-VAE model not found, downloading..."
+    elif [ $(stat -c%s "$SDVAE_BIN" 2>/dev/null || stat -f%z "$SDVAE_BIN" 2>/dev/null || echo 0) -lt 100000000 ]; then
+        echo -e "  ${YELLOW}SD-VAE model corrupted (too small), re-downloading...${NC}"
+        rm -rf "$MODELS_DIR/sd-vae"
+        NEED_SDVAE=true
+    fi
+
+    if [ "$NEED_SDVAE" = true ]; then
         mkdir -p "$MODELS_DIR/sd-vae"
         python -c "
 from huggingface_hub import snapshot_download
@@ -362,15 +429,319 @@ except Exception as e:
     print(f'  Warning: SD-VAE download failed: {e}')
 " && echo -e "  ${GREEN}SD-VAE model downloaded${NC}" || echo -e "  ${YELLOW}SD-VAE model download skipped${NC}"
     else
-        echo -e "  ${GREEN}SD-VAE model already exists${NC}"
+        echo -e "  ${GREEN}SD-VAE model already exists (valid)${NC}"
     fi
+
+    # Create symlinks for MuseTalk's expected model paths
+    # MuseTalk looks for models in its own directory structure
+    echo -e "  ${YELLOW}Setting up MuseTalk model symlinks...${NC}"
+    MUSETALK_MODELS="$NEWAVATA_DIR/MuseTalk/models"
+    mkdir -p "$MUSETALK_MODELS/musetalk" "$MUSETALK_MODELS/face-parse-bisent" "$MUSETALK_MODELS/sd-vae"
+
+    # MuseTalk model symlink
+    if [ -f "$MODELS_DIR/musetalk/pytorch_model.bin" ] && [ ! -f "$MUSETALK_MODELS/musetalk/pytorch_model.bin" ]; then
+        ln -sf "$MODELS_DIR/musetalk/pytorch_model.bin" "$MUSETALK_MODELS/musetalk/pytorch_model.bin" 2>/dev/null || \
+            cp "$MODELS_DIR/musetalk/pytorch_model.bin" "$MUSETALK_MODELS/musetalk/pytorch_model.bin"
+        [ -f "$MODELS_DIR/musetalk/musetalk.json" ] && \
+            (ln -sf "$MODELS_DIR/musetalk/musetalk.json" "$MUSETALK_MODELS/musetalk/musetalk.json" 2>/dev/null || \
+             cp "$MODELS_DIR/musetalk/musetalk.json" "$MUSETALK_MODELS/musetalk/musetalk.json")
+        echo -e "    ${GREEN}MuseTalk model linked${NC}"
+    fi
+
+    # FaceParse model symlink
+    if [ -f "$FACEPARSE_MODEL" ] && [ ! -f "$MUSETALK_MODELS/face-parse-bisent/79999_iter.pth" ]; then
+        ln -sf "$FACEPARSE_MODEL" "$MUSETALK_MODELS/face-parse-bisent/79999_iter.pth" 2>/dev/null || \
+            cp "$FACEPARSE_MODEL" "$MUSETALK_MODELS/face-parse-bisent/79999_iter.pth"
+        echo -e "    ${GREEN}FaceParse model linked${NC}"
+    fi
+
+    # SD-VAE model symlink
+    if [ -d "$MODELS_DIR/sd-vae" ] && [ ! -f "$MUSETALK_MODELS/sd-vae/config.json" ]; then
+        ln -sf "$MODELS_DIR/sd-vae/config.json" "$MUSETALK_MODELS/sd-vae/config.json" 2>/dev/null || \
+            cp "$MODELS_DIR/sd-vae/config.json" "$MUSETALK_MODELS/sd-vae/config.json"
+        ln -sf "$MODELS_DIR/sd-vae/diffusion_pytorch_model.bin" "$MUSETALK_MODELS/sd-vae/diffusion_pytorch_model.bin" 2>/dev/null || \
+            cp "$MODELS_DIR/sd-vae/diffusion_pytorch_model.bin" "$MUSETALK_MODELS/sd-vae/diffusion_pytorch_model.bin"
+        echo -e "    ${GREEN}SD-VAE model linked${NC}"
+    fi
+
+    echo -e "  ${GREEN}MuseTalk model symlinks configured${NC}"
 
     )  # End of subshell for model downloads
     echo -e "  ${GREEN}Model check subshell completed${NC}"
 fi
 
+# Final validation: Ensure all critical models are valid before proceeding
+echo -e "\n${YELLOW}[5.5/7] Final model validation...${NC}"
+MODELS_VALID=true
+
+# Re-define paths (subshell variables don't persist)
+NEWAVATA_DIR="${NEWAVATA_DIR:-$HOME/NewAvata}"
+NEWAVATA_APP_DIR="$NEWAVATA_DIR/realtime-interview-avatar"
+MODELS_DIR="$NEWAVATA_APP_DIR/models"
+MUSETALK_MODELS="$NEWAVATA_DIR/MuseTalk/models"
+
+# Activate venv for validation
+if [ -f "$NEWAVATA_APP_DIR/venv/bin/activate" ]; then
+    source "$NEWAVATA_APP_DIR/venv/bin/activate"
+fi
+
+# Check FaceParse model (most critical)
+FACEPARSE_MODEL="$MODELS_DIR/face-parse-bisent/79999_iter.pth"
+FACEPARSE_SYMLINK="$MUSETALK_MODELS/face-parse-bisent/79999_iter.pth"
+
+validate_faceparse() {
+    local model_path="$1"
+    if [ ! -f "$model_path" ]; then
+        return 1
+    fi
+    python3 -c "
+import torch
+try:
+    torch.load('$model_path', map_location='cpu', weights_only=False)
+    exit(0)
+except:
+    exit(1)
+" 2>/dev/null
+    return $?
+}
+
+echo -e "  Checking FaceParse model..."
+if ! validate_faceparse "$FACEPARSE_MODEL"; then
+    echo -e "  ${YELLOW}FaceParse model invalid or missing. Downloading...${NC}"
+    rm -f "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
+    mkdir -p "$(dirname $FACEPARSE_MODEL)" "$(dirname $FACEPARSE_SYMLINK)"
+
+    python3 << 'DOWNLOAD_FACEPARSE'
+import os
+import shutil
+import torch
+from huggingface_hub import hf_hub_download
+
+output = os.environ.get('FACEPARSE_MODEL',
+    os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
+os.makedirs(os.path.dirname(output), exist_ok=True)
+
+sources = [
+    ('camenduru/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+    ('TMElyralab/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+]
+
+downloaded = False
+for repo_id, filename in sources:
+    try:
+        print(f'  Trying: {repo_id}')
+        path = hf_hub_download(repo_id=repo_id, filename=filename)
+        shutil.copy(path, output)
+
+        # Validate
+        torch.load(output, map_location='cpu', weights_only=False)
+        print(f'  SUCCESS from {repo_id}')
+        downloaded = True
+        break
+    except Exception as e:
+        print(f'  Failed: {e}')
+        if os.path.exists(output):
+            os.remove(output)
+        continue
+
+exit(0 if downloaded else 1)
+DOWNLOAD_FACEPARSE
+
+    export FACEPARSE_MODEL
+    if [ $? -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+        echo -e "  ${GREEN}FaceParse model downloaded and validated${NC}"
+        # Create symlink
+        ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
+            cp "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
+    else
+        echo -e "  ${RED}ERROR: Failed to download valid FaceParse model${NC}"
+        MODELS_VALID=false
+    fi
+else
+    echo -e "  ${GREEN}FaceParse model: OK${NC}"
+    # Ensure symlink exists
+    if [ ! -f "$FACEPARSE_SYMLINK" ]; then
+        mkdir -p "$(dirname $FACEPARSE_SYMLINK)"
+        ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
+            cp "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
+    fi
+fi
+
+if [ "$MODELS_VALID" = false ]; then
+    echo -e "\n${RED}=== Critical models missing. Retrying download... ===${NC}"
+
+    # Retry download with more sources and longer timeout
+    for retry in 1 2 3; do
+        echo -e "  ${YELLOW}Retry attempt $retry/3...${NC}"
+
+        python3 << 'RETRY_DOWNLOAD'
+import os
+import shutil
+import torch
+from huggingface_hub import hf_hub_download
+import urllib.request
+
+output = os.environ.get('FACEPARSE_MODEL',
+    os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
+os.makedirs(os.path.dirname(output), exist_ok=True)
+
+sources = [
+    # HuggingFace sources
+    ('camenduru/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+    ('TMElyralab/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+    ('WHMRT/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+]
+
+# Direct URLs as fallback
+direct_urls = [
+    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+]
+
+downloaded = False
+
+# Try HuggingFace sources
+for repo_id, filename in sources:
+    try:
+        print(f'  Trying HF: {repo_id}')
+        path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+        shutil.copy(path, output)
+        torch.load(output, map_location='cpu', weights_only=False)
+        print(f'  SUCCESS from {repo_id}')
+        downloaded = True
+        break
+    except Exception as e:
+        print(f'  Failed: {e}')
+        if os.path.exists(output):
+            os.remove(output)
+
+# Try direct URLs if HF failed
+if not downloaded:
+    for url in direct_urls:
+        try:
+            print(f'  Trying URL: {url[:50]}...')
+            urllib.request.urlretrieve(url, output)
+            torch.load(output, map_location='cpu', weights_only=False)
+            print(f'  SUCCESS from direct URL')
+            downloaded = True
+            break
+        except Exception as e:
+            print(f'  Failed: {e}')
+            if os.path.exists(output):
+                os.remove(output)
+
+exit(0 if downloaded else 1)
+RETRY_DOWNLOAD
+
+        export FACEPARSE_MODEL
+        if [ $? -eq 0 ] && validate_faceparse "$FACEPARSE_MODEL"; then
+            echo -e "  ${GREEN}FaceParse model downloaded successfully on retry $retry${NC}"
+            ln -sf "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK" 2>/dev/null || \
+                cp "$FACEPARSE_MODEL" "$FACEPARSE_SYMLINK"
+            MODELS_VALID=true
+            break
+        fi
+
+        sleep 5
+    done
+
+    if [ "$MODELS_VALID" = false ]; then
+        echo -e "\n${RED}=== FATAL: Could not download FaceParse model after 3 retries ===${NC}"
+        echo -e "${YELLOW}Please manually download the model:${NC}"
+        echo -e "  1. Visit: https://huggingface.co/camenduru/MuseTalk/tree/main/models/face-parse-bisent"
+        echo -e "  2. Download: 79999_iter.pth"
+        echo -e "  3. Place in: $FACEPARSE_MODEL"
+        echo -e ""
+        echo -e "${YELLOW}Then re-run: bash start_full.sh${NC}"
+        exit 1
+    fi
+fi
+
 # Setup NewAvata precomputed avatars
 echo -e "\n${YELLOW}[6/7] Setting up NewAvata avatars...${NC}"
+
+# CRITICAL: Re-validate and fix FaceParse model right before precompute
+# MuseTalk looks for model at: MuseTalk/models/face-parse-bisent/79999_iter.pth
+echo -e "  ${YELLOW}Final FaceParse model check before precompute...${NC}"
+
+MUSETALK_FACEPARSE="$NEWAVATA_DIR/MuseTalk/models/face-parse-bisent/79999_iter.pth"
+NEWAVATA_FACEPARSE="$NEWAVATA_APP_DIR/models/face-parse-bisent/79999_iter.pth"
+
+# Activate venv for validation
+if [ -f "$NEWAVATA_APP_DIR/venv/bin/activate" ]; then
+    source "$NEWAVATA_APP_DIR/venv/bin/activate"
+fi
+
+# Check if MuseTalk's expected model location is valid
+NEED_FIX=false
+if [ ! -f "$MUSETALK_FACEPARSE" ]; then
+    echo -e "  ${YELLOW}MuseTalk FaceParse model missing${NC}"
+    NEED_FIX=true
+elif ! python3 -c "import torch; torch.load('$MUSETALK_FACEPARSE', map_location='cpu', weights_only=False)" 2>/dev/null; then
+    echo -e "  ${YELLOW}MuseTalk FaceParse model corrupted${NC}"
+    NEED_FIX=true
+fi
+
+if [ "$NEED_FIX" = true ]; then
+    echo -e "  ${CYAN}Downloading fresh FaceParse model...${NC}"
+
+    # Delete ALL copies (corrupted)
+    rm -f "$MUSETALK_FACEPARSE" "$NEWAVATA_FACEPARSE"
+    mkdir -p "$(dirname $MUSETALK_FACEPARSE)" "$(dirname $NEWAVATA_FACEPARSE)"
+
+    # Download directly to MuseTalk's expected location
+    python3 << 'FIX_FACEPARSE'
+import os
+import shutil
+import torch
+from huggingface_hub import hf_hub_download
+
+musetalk_path = os.path.expanduser('~/NewAvata/MuseTalk/models/face-parse-bisent/79999_iter.pth')
+newavata_path = os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth')
+
+os.makedirs(os.path.dirname(musetalk_path), exist_ok=True)
+os.makedirs(os.path.dirname(newavata_path), exist_ok=True)
+
+sources = [
+    ('camenduru/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+    ('TMElyralab/MuseTalk', 'models/face-parse-bisent/79999_iter.pth'),
+]
+
+for repo_id, filename in sources:
+    try:
+        print(f'  Downloading from {repo_id}...')
+        path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+
+        # COPY to BOTH locations (not symlink)
+        shutil.copy(path, musetalk_path)
+        shutil.copy(path, newavata_path)
+
+        # Validate both
+        print(f'  Validating MuseTalk location...')
+        torch.load(musetalk_path, map_location='cpu', weights_only=False)
+        print(f'  Validating NewAvata location...')
+        torch.load(newavata_path, map_location='cpu', weights_only=False)
+
+        print(f'  SUCCESS: FaceParse model installed to both locations')
+        exit(0)
+    except Exception as e:
+        print(f'  Failed from {repo_id}: {e}')
+        for p in [musetalk_path, newavata_path]:
+            if os.path.exists(p):
+                os.remove(p)
+        continue
+
+print('  ERROR: Could not download valid FaceParse model')
+exit(1)
+FIX_FACEPARSE
+
+    if [ $? -ne 0 ]; then
+        echo -e "  ${RED}FATAL: Cannot fix FaceParse model. Exiting.${NC}"
+        exit 1
+    fi
+    echo -e "  ${GREEN}FaceParse model fixed successfully${NC}"
+else
+    echo -e "  ${GREEN}FaceParse model: OK${NC}"
+fi
 
 PRECOMPUTED_DIR="$NEWAVATA_APP_DIR/precomputed"
 ASSETS_DIR="$NEWAVATA_APP_DIR/assets"
