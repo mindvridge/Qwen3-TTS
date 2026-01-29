@@ -118,12 +118,26 @@ else
     FA_WHEEL_URL="https://github.com/mindvridge/Qwen3-TTS/releases/download/flash-attn-wheels/flash_attn-2.8.3-cp310-cp310-linux_x86_64.whl"
     WHEEL_DIR="/tmp/fa_wheel"
     mkdir -p "$WHEEL_DIR"
+    FA_INSTALLED=false
     if wget -q -O "${WHEEL_DIR}/flash_attn.whl" "$FA_WHEEL_URL" 2>/dev/null; then
-        pip install "${WHEEL_DIR}/flash_attn.whl" --quiet 2>/dev/null && \
-            echo -e "  ${GREEN}Flash Attention installed from wheel${NC}" || \
-            echo -e "  ${YELLOW}Flash Attention wheel install failed${NC}"
+        if pip install "${WHEEL_DIR}/flash_attn.whl" --quiet 2>/dev/null; then
+            echo -e "  ${GREEN}Flash Attention installed from wheel${NC}"
+            FA_INSTALLED=true
+        fi
     fi
     rm -rf "$WHEEL_DIR"
+
+    # If Flash Attention failed, disable it in .env
+    if [ "$FA_INSTALLED" = false ]; then
+        echo -e "  ${YELLOW}Flash Attention install failed, disabling in .env${NC}"
+        # Update .env to disable flash attention
+        if [ -f ".env" ]; then
+            sed -i 's/TTS_USE_FLASH_ATTENTION=true/TTS_USE_FLASH_ATTENTION=false/g' .env 2>/dev/null || true
+        fi
+        # Also set environment variable for current session
+        export TTS_USE_FLASH_ATTENTION=false
+        echo -e "  ${CYAN}Will use SDPA (scaled dot-product attention) instead${NC}"
+    fi
 fi
 
 # Install system dependencies (sox, ffmpeg)
@@ -574,13 +588,34 @@ NEWAVATA_SCRIPT
     # Start TTS server in foreground
     cd "$SCRIPT_DIR"
 
-    # Ensure we're using system Python (not NewAvata venv)
-    # Force deactivate any active venv
+    # Ensure we're using the correct Python environment
+    # Force deactivate any active venv and reset PATH
     deactivate 2>/dev/null || true
     unset VIRTUAL_ENV 2>/dev/null || true
 
+    # If Qwen3-TTS has its own venv, activate it
+    if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
+        source "$SCRIPT_DIR/venv/bin/activate"
+        echo -e "  ${GREEN}Activated Qwen3-TTS venv${NC}"
+    fi
+
     # Verify TTS environment before starting
     echo -e "\n  ${CYAN}Verifying TTS environment...${NC}"
+
+    # Check which Python we're using
+    PYTHON_PATH=$(which python)
+    echo -e "  Python: ${CYAN}$PYTHON_PATH${NC}"
+
+    # Make sure we're not using NewAvata's Python
+    if echo "$PYTHON_PATH" | grep -q "NewAvata"; then
+        echo -e "  ${YELLOW}Warning: Using NewAvata Python, attempting to fix...${NC}"
+        # Try to use system Python
+        if [ -x "/usr/bin/python3" ]; then
+            alias python=/usr/bin/python3
+            export PATH="/usr/bin:$PATH"
+        fi
+    fi
+
     if ! python -c "import fastapi" 2>/dev/null; then
         echo -e "  ${YELLOW}fastapi missing after NewAvata setup, reinstalling...${NC}"
         pip install -r requirements.txt --quiet 2>/dev/null
