@@ -228,6 +228,9 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # - All sentences use the same pre-computed voice features
             # - Eliminates per-sentence embedding extraction inconsistency
             print(f"[DEBUG] Pre-computing voice clone prompt (speaker embedding + ICL codes)...")
+            voice_clone_prompt = None
+            use_precomputed_prompt = False
+
             try:
                 # create_voice_clone_prompt signature: (ref_audio, ref_text=None, x_vector_only_mode=False)
                 voice_clone_prompt = model.create_voice_clone_prompt(
@@ -235,21 +238,58 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                     ref_text=request.ref_text,
                     x_vector_only_mode=request.x_vector_only_mode,
                 )
-                print(f"[DEBUG] Voice clone prompt created successfully")
-                use_precomputed_prompt = True
+
+                # Validate the prompt was created correctly
+                if voice_clone_prompt and len(voice_clone_prompt) > 0:
+                    prompt_item = voice_clone_prompt[0]
+                    # Check that speaker embedding exists and has reasonable shape
+                    if hasattr(prompt_item, 'ref_spk_embedding') and prompt_item.ref_spk_embedding is not None:
+                        emb_shape = prompt_item.ref_spk_embedding.shape
+                        print(f"[DEBUG] Voice clone prompt created successfully:")
+                        print(f"[DEBUG]   - Speaker embedding shape: {emb_shape}")
+                        print(f"[DEBUG]   - x_vector_only_mode: {prompt_item.x_vector_only_mode}")
+                        print(f"[DEBUG]   - icl_mode: {prompt_item.icl_mode}")
+                        print(f"[DEBUG]   - ref_code: {'present' if prompt_item.ref_code is not None else 'None'}")
+                        use_precomputed_prompt = True
+                    else:
+                        print(f"[DEBUG] WARNING: Voice clone prompt has no speaker embedding!")
+                        voice_clone_prompt = None
+                else:
+                    print(f"[DEBUG] WARNING: Voice clone prompt is empty!")
+                    voice_clone_prompt = None
+
             except Exception as e:
-                print(f"[DEBUG] Failed to create voice clone prompt: {e}")
-                print(f"[DEBUG] Falling back to per-sentence mode")
+                print(f"[DEBUG] ERROR: Failed to create voice clone prompt: {e}")
+                import traceback
+                traceback.print_exc()
                 voice_clone_prompt = None
                 use_precomputed_prompt = False
+
+            if not use_precomputed_prompt:
+                print(f"[DEBUG] WARNING: Falling back to per-sentence mode (may cause voice inconsistency)")
+
+            # Set random seed for reproducibility within this request
+            # This ensures consistent voice characteristics across all sentences
+            if request.seed is not None:
+                request_seed = request.seed
+                print(f"[DEBUG] Using user-provided seed: {request_seed}")
+            else:
+                request_seed = int(time.time() * 1000) % (2**31)
+                print(f"[DEBUG] Using auto-generated seed: {request_seed}")
 
             # Generate each sentence separately
             all_wavs = []
             for i, sentence in enumerate(sentences):
                 print(f"[DEBUG] Generating sentence {i+1}/{len(sentences)}: '{sentence[:50]}...'")
 
+                # Set seed before each generation for reproducibility
+                torch.manual_seed(request_seed + i)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed(request_seed + i)
+
                 if use_precomputed_prompt:
                     # Use pre-computed voice clone prompt (fundamental fix)
+                    print(f"[DEBUG]   Using PRECOMPUTED prompt (consistent voice)")
                     wavs, sr = model.generate_voice_clone(
                         text=sentence,
                         language=request.language,
@@ -258,7 +298,8 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
                         **gen_kwargs,
                     )
                 else:
-                    # Fallback: per-sentence extraction
+                    # Fallback: per-sentence extraction (may cause first sentence issue)
+                    print(f"[DEBUG]   Using PER-SENTENCE extraction (may cause voice mismatch)")
                     wavs, sr = model.generate_voice_clone(
                         text=sentence,
                         language=request.language,
