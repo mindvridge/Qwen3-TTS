@@ -5,6 +5,10 @@
 # Qwen3-TTS API Server
 # Based on Qwen3-TTS examples from https://github.com/QwenLM/Qwen3-TTS
 
+# Load .env file before importing config
+from dotenv import load_dotenv
+load_dotenv()
+
 import io
 import json
 import base64
