@@ -1,11 +1,15 @@
 # coding=utf-8
 # Video Generator - TTS + Lip-sync Integration
-# Wrapper for NewAvata (https://github.com/mindvridge/NewAvata)
+# Supports two modes:
+# 1. Direct MuseTalk integration (embedded)
+# 2. NewAvata API integration (external service, recommended for A100)
 
 import os
 import sys
 import io
 import tempfile
+import time
+import requests
 from pathlib import Path
 from typing import Union, Optional
 import numpy as np
@@ -16,21 +20,60 @@ import config
 
 class VideoGenerator:
     """
-    Wrapper class for NewAvata lip-sync video generation.
+    Wrapper class for lip-sync video generation.
 
-    This class integrates TTS-generated audio with avatar images to create
-    lip-synced videos using the NewAvata framework.
+    Supports two modes:
+    1. USE_NEWAVATA_API=true: Calls external NewAvata REST API (recommended)
+    2. USE_NEWAVATA_API=false: Runs MuseTalk directly (embedded mode)
     """
 
     def __init__(self):
-        """Initialize VideoGenerator and check NewAvata availability."""
-        self.newavata_path = Path(config.NEWAVATA_PATH)
+        """Initialize VideoGenerator based on configuration."""
         self.avatar_dir = Path(config.VIDEO_AVATAR_DIR)
         self.output_dir = Path(config.VIDEO_OUTPUT_DIR)
 
         # Create directories if they don't exist
         self.avatar_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check which mode to use
+        self.use_api = config.USE_NEWAVATA_API
+        self.api_url = config.NEWAVATA_API_URL
+
+        if self.use_api:
+            # API mode - verify NewAvata service is reachable
+            self._init_api_mode()
+        else:
+            # Embedded mode - initialize MuseTalk directly
+            self._init_embedded_mode()
+
+    def _init_api_mode(self):
+        """Initialize API mode - verify NewAvata service."""
+        print(f"[VideoGenerator] Using NewAvata API mode: {self.api_url}")
+
+        try:
+            # Check if NewAvata API is available
+            response = requests.get(f"{self.api_url}/health", timeout=5)
+            if response.status_code == 200:
+                print(f"[VideoGenerator] NewAvata API is available")
+                self.newavata_available = True
+            else:
+                print(f"[VideoGenerator] Warning: NewAvata API returned {response.status_code}")
+                self.newavata_available = True  # Still allow initialization
+        except requests.exceptions.ConnectionError:
+            print(f"[VideoGenerator] Warning: NewAvata API not reachable at {self.api_url}")
+            print(f"[VideoGenerator] Make sure NewAvata server is running:")
+            print(f"  cd NewAvata/realtime-interview-avatar && bash run_server.sh")
+            self.newavata_available = True  # Allow initialization, will fail on generate
+        except Exception as e:
+            print(f"[VideoGenerator] Warning: API check failed: {e}")
+            self.newavata_available = True
+
+        self.models_loaded = True  # API mode doesn't need local model loading
+
+    def _init_embedded_mode(self):
+        """Initialize embedded mode - load MuseTalk directly."""
+        self.newavata_path = Path(config.NEWAVATA_PATH)
 
         # Check if MuseTalk is available
         musetalk_path = self.newavata_path / "MuseTalk"
@@ -40,7 +83,8 @@ class VideoGenerator:
                 f"Please clone it first:\n"
                 f"  git clone https://github.com/TMElyralab/MuseTalk.git {musetalk_path}\n"
                 f"  cd {musetalk_path}\n"
-                f"  python scripts/download_models.py"
+                f"  python scripts/download_models.py\n\n"
+                f"Or use NewAvata API mode by setting USE_NEWAVATA_API=true"
             )
 
         # Add MuseTalk to Python path
@@ -84,7 +128,7 @@ class VideoGenerator:
 
         Args:
             audio_data: Audio data as bytes (WAV format) or numpy array
-            avatar_image_path: Path to avatar image file (JPG/PNG)
+            avatar_image_path: Path to avatar image file (JPG/PNG) or avatar name
             sample_rate: Audio sample rate (default: 12000 for Qwen3-TTS)
             output_path: Optional path to save output video (if None, returns bytes)
 
@@ -92,8 +136,91 @@ class VideoGenerator:
             Video file as bytes (MP4 format)
         """
         if not self.newavata_available:
-            raise RuntimeError("NewAvata is not properly initialized")
+            raise RuntimeError("Video generation is not properly initialized")
 
+        if self.use_api:
+            return self._generate_via_api(audio_data, avatar_image_path, sample_rate, output_path)
+        else:
+            return self._generate_embedded(audio_data, avatar_image_path, sample_rate, output_path)
+
+    def _generate_via_api(
+        self,
+        audio_data: Union[bytes, np.ndarray],
+        avatar_image_path: Union[str, Path],
+        sample_rate: int,
+        output_path: Optional[Union[str, Path]]
+    ) -> bytes:
+        """Generate video using NewAvata REST API."""
+        t0 = time.time()
+
+        # Convert audio to bytes if needed
+        if isinstance(audio_data, np.ndarray):
+            audio_io = io.BytesIO()
+            sf.write(audio_io, audio_data, sample_rate, format='WAV')
+            audio_bytes = audio_io.getvalue()
+        else:
+            audio_bytes = audio_data
+
+        # Resolve avatar path
+        avatar_path = Path(avatar_image_path)
+        if not avatar_path.is_absolute():
+            avatar_path = self.avatar_dir / avatar_path
+
+        if not avatar_path.exists():
+            raise FileNotFoundError(f"Avatar not found: {avatar_path}")
+
+        print(f"[VideoGenerator] Calling NewAvata API:")
+        print(f"  URL: {self.api_url}/generate")
+        print(f"  Avatar: {avatar_path}")
+        print(f"  Audio size: {len(audio_bytes)} bytes")
+
+        try:
+            # Prepare multipart form data
+            files = {
+                'audio': ('audio.wav', audio_bytes, 'audio/wav'),
+                'avatar': ('avatar.jpg', open(avatar_path, 'rb'), 'image/jpeg')
+            }
+
+            # Call NewAvata API
+            response = requests.post(
+                f"{self.api_url}/generate",
+                files=files,
+                timeout=300  # 5 minutes timeout for long videos
+            )
+
+            if response.status_code != 200:
+                error_msg = response.text[:500] if response.text else "Unknown error"
+                raise RuntimeError(f"NewAvata API error ({response.status_code}): {error_msg}")
+
+            video_bytes = response.content
+            gen_time = time.time() - t0
+            print(f"[VideoGenerator] Video generated via API in {gen_time:.2f}s ({len(video_bytes)} bytes)")
+
+            # Save to file if output_path specified
+            if output_path:
+                with open(output_path, 'wb') as f:
+                    f.write(video_bytes)
+                print(f"[VideoGenerator] Saved to {output_path}")
+
+            return video_bytes
+
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(
+                f"Cannot connect to NewAvata API at {self.api_url}\n"
+                f"Make sure the NewAvata server is running:\n"
+                f"  cd NewAvata/realtime-interview-avatar && bash run_server.sh"
+            )
+        except requests.exceptions.Timeout:
+            raise RuntimeError("NewAvata API request timed out (>5 minutes)")
+
+    def _generate_embedded(
+        self,
+        audio_data: Union[bytes, np.ndarray],
+        avatar_image_path: Union[str, Path],
+        sample_rate: int,
+        output_path: Optional[Union[str, Path]]
+    ) -> bytes:
+        """Generate video using embedded MuseTalk (original implementation)."""
         # Convert audio to temporary file if needed
         if isinstance(audio_data, bytes):
             audio_io = io.BytesIO(audio_data)
@@ -116,7 +243,7 @@ class VideoGenerator:
             video_output = str(output_path)
 
         try:
-            print(f"[VideoGenerator] Generating lip-sync video:")
+            print(f"[VideoGenerator] Generating lip-sync video (embedded mode):")
             print(f"  Audio: {audio_temp_path}")
             print(f"  Avatar: {avatar_image_path}")
             print(f"  Output: {video_output}")
@@ -128,8 +255,6 @@ class VideoGenerator:
                 sys.path.insert(0, str(musetalk_path))
 
                 from musetalk.utils.utils import load_all_model
-                from musetalk.utils.preprocessing import get_landmark_and_bbox, coord_placeholder
-                from musetalk.utils.blending import get_image
                 import torch
 
                 # Load models
@@ -149,11 +274,6 @@ class VideoGenerator:
                 print(f"[VideoGenerator] Models loaded successfully")
 
             # Run MuseTalk inference
-            from musetalk.utils.utils import datagen
-
-            # Prepare input
-            # MuseTalk expects a video path or image folder
-            # Since we have a single image, create a temp folder with the image
             import shutil
             temp_img_dir = tempfile.mkdtemp()
             try:
@@ -162,12 +282,11 @@ class VideoGenerator:
                 shutil.copy(str(avatar_image_path), temp_img_path)
 
                 # Run inference using MuseTalk's main function
-                # Note: This is a simplified version - you may need to adjust parameters
                 from musetalk.inference import inference
 
                 video_output, _ = inference(
                     audio_path=audio_temp_path,
-                    video_path=temp_img_dir,  # Use image folder
+                    video_path=temp_img_dir,
                     bbox_shift=0,
                     extra_margin=10,
                     parsing_mode="jaw"

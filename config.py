@@ -111,3 +111,9 @@ ENABLE_VIDEO = os.getenv("ENABLE_VIDEO", "false").lower() == "true"
 VIDEO_AVATAR_DIR = os.getenv("VIDEO_AVATAR_DIR", os.path.join(BASE_DIR, "avatars"))
 VIDEO_OUTPUT_DIR = os.getenv("VIDEO_OUTPUT_DIR", os.path.join(BASE_DIR, "output"))
 NEWAVATA_PATH = os.getenv("NEWAVATA_PATH", os.path.join(BASE_DIR, "NewAvata"))
+
+# NewAvata API settings (for external lip-sync service)
+# When USE_NEWAVATA_API=true, video_generator calls NewAvata's REST API
+# instead of running MuseTalk directly (recommended for A100 deployment)
+USE_NEWAVATA_API = os.getenv("USE_NEWAVATA_API", "false").lower() == "true"
+NEWAVATA_API_URL = os.getenv("NEWAVATA_API_URL", "http://localhost:8001")

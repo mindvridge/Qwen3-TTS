@@ -2,14 +2,18 @@
 
 ## 개요
 
-Qwen3-TTS 서버는 **MuseTalk 기반 선택적 비디오 생성 기능**을 제공합니다:
+Qwen3-TTS 서버는 **NewAvata 기반 선택적 비디오 생성 기능**을 제공합니다:
 - **TTS만**: 음성 생성 API (기본)
-- **TTS + 비디오**: 음성 + MuseTalk 립싱크 영상 생성 (확장)
+- **TTS + 비디오**: 음성 + NewAvata 립싱크 영상 생성 (확장)
 
 **기술 스택:**
 - TTS: Qwen3-TTS (0.6B/1.7B)
-- 립싱크: MuseTalk (TMElyralab/MuseTalk)
+- 립싱크: NewAvata (https://github.com/mindvridge/NewAvata)
 - 통합: FastAPI REST API
+
+**통합 모드:**
+- **API 모드** (권장): NewAvata를 별도 서비스로 실행, REST API로 통신
+- **임베디드 모드**: MuseTalk을 Qwen3-TTS 프로세스에서 직접 실행
 
 ---
 
@@ -49,7 +53,66 @@ python server.py
 
 ---
 
-### 옵션 B: TTS + 비디오 사용 (완전 기능)
+### 옵션 B: TTS + 비디오 사용 - API 모드 (권장, A100 80GB)
+
+**장점:** 메모리 효율적, 독립 스케일링, TensorRT 최적화 포함
+
+```bash
+# === 터미널 1: Qwen3-TTS 서버 ===
+cd Qwen3-TTS
+
+# 1. TTS 의존성 설치
+pip install -r requirements.txt
+pip install -U flash-attn --no-build-isolation
+
+# 2. .env 설정 (API 모드)
+cp .env.example .env
+nano .env
+```
+
+`.env` 파일 (API 모드):
+```bash
+# TTS 설정
+TTS_USE_FLASH_ATTENTION=true
+TTS_DEVICE=cuda:0
+TTS_DTYPE=bfloat16
+
+# 비디오 설정 (API 모드)
+ENABLE_VIDEO=true
+USE_NEWAVATA_API=true
+NEWAVATA_API_URL=http://localhost:8001
+VIDEO_AVATAR_DIR=avatars
+```
+
+```bash
+# 3. 아바타 이미지 준비
+mkdir -p avatars
+# avatars/ 폴더에 이미지 복사
+
+# 4. TTS 서버 시작 (포트 8000)
+python server.py
+```
+
+```bash
+# === 터미널 2: NewAvata 서버 ===
+# 5. NewAvata 클론 및 배포
+git clone https://github.com/mindvridge/NewAvata.git
+cd NewAvata/realtime-interview-avatar
+
+# 6. A100 최적화 배포 (자동 설정)
+chmod +x deploy_a100.sh
+./deploy_a100.sh
+
+# 7. NewAvata 서버 시작 (포트 8001)
+bash run_server.sh
+```
+
+---
+
+### 옵션 C: TTS + 비디오 사용 - 임베디드 모드 (A100 40GB)
+
+**장점:** 단일 프로세스, 설정 간단
+**단점:** 메모리 공유로 긴 영상에서 OOM 가능
 
 ```bash
 cd Qwen3-TTS
@@ -68,20 +131,21 @@ cd NewAvata/MuseTalk
 python scripts/download_models.py
 cd ../..
 
-# 4. .env 설정
+# 4. .env 설정 (임베디드 모드)
 cp .env.example .env
 nano .env
 ```
 
-`.env` 파일 설정:
+`.env` 파일 (임베디드 모드):
 ```bash
 # TTS 설정
 TTS_USE_FLASH_ATTENTION=true
 TTS_DEVICE=cuda:0
 TTS_DTYPE=bfloat16
 
-# 비디오 설정
+# 비디오 설정 (임베디드 모드)
 ENABLE_VIDEO=true
+USE_NEWAVATA_API=false
 NEWAVATA_PATH=NewAvata
 VIDEO_AVATAR_DIR=avatars
 VIDEO_OUTPUT_DIR=output
@@ -313,9 +377,8 @@ echo "TTS_DEFAULT_MODEL=base_0.6b" >> .env
 ## 참고 자료
 
 - **Qwen3-TTS**: https://github.com/QwenLM/Qwen3-TTS
-- **MuseTalk**: https://github.com/TMElyralab/MuseTalk
-- **MuseTalk Hugging Face**: https://huggingface.co/TMElyralab/MuseTalk
-- **NewAvata (realtime-interview-avatar)**: https://github.com/mindvridge/NewAvata
+- **NewAvata**: https://github.com/mindvridge/NewAvata (A100 최적화 립싱크)
+- **MuseTalk (원본)**: https://github.com/TMElyralab/MuseTalk
 - **엘리스 배포 가이드**: [ELICE_DEPLOYMENT_GUIDE.md](ELICE_DEPLOYMENT_GUIDE.md)
 
 ---
@@ -323,20 +386,28 @@ echo "TTS_DEFAULT_MODEL=base_0.6b" >> .env
 ## 요약
 
 ✅ **완료된 작업:**
-- video_generator.py MuseTalk API 통합 완료
-- requirements-video.txt MuseTalk 의존성 정의
+- video_generator.py NewAvata API 통합 완료 (API 모드 + 임베디드 모드)
+- requirements-video.txt 비디오 의존성 정의
 - server.py /video/generate 엔드포인트 구현
-- .env.example 비디오 설정 추가
+- .env.example 비디오 설정 추가 (USE_NEWAVATA_API, NEWAVATA_API_URL)
 - 문서 작성 (배포 가이드, 통합 가이드)
 
 📋 **사용 방법:**
 1. **TTS만**: `pip install -r requirements.txt` → `python server.py`
-2. **TTS + 비디오**: 추가로 `pip install -r requirements-video.txt` + MuseTalk 클론 + `ENABLE_VIDEO=true`
+2. **TTS + 비디오 (API 모드)**: NewAvata 서버 별도 실행 + `USE_NEWAVATA_API=true`
+3. **TTS + 비디오 (임베디드)**: MuseTalk 클론 + `USE_NEWAVATA_API=false`
 
 🎯 **권장 배포 순서:**
 1. TTS만 먼저 A100 40GB에 배포하여 검증
-2. 검증 완료 후 A100 80GB로 업그레이드하고 비디오 기능 추가
+2. 검증 완료 후 A100 80GB로 업그레이드
+3. NewAvata 별도 배포 (API 모드 권장)
+
+📊 **모드 비교:**
+| 모드 | GPU 요구 | 장점 | 단점 |
+|------|----------|------|------|
+| API 모드 | 80GB 권장 | 독립 스케일링, TensorRT 최적화 | 두 서버 관리 필요 |
+| 임베디드 | 40GB 가능 | 단일 프로세스, 간단한 설정 | 메모리 공유, 긴 영상 OOM |
 
 Sources:
-- [GitHub - TMElyralab/MuseTalk](https://github.com/TMElyralab/MuseTalk)
-- [MuseTalk/app.py at main](https://github.com/TMElyralab/MuseTalk/blob/main/app.py)
+- [NewAvata (A100 최적화)](https://github.com/mindvridge/NewAvata)
+- [MuseTalk (원본)](https://github.com/TMElyralab/MuseTalk)
