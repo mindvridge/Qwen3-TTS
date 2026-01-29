@@ -414,6 +414,15 @@ else
                 fi
 
                 if [ -n "$PRECOMPUTE_SCRIPT" ]; then
+                    # Fix hardcoded Windows path in precompute_avatar.py
+                    # Change: os.chdir("c:/NewAvata/NewAvata/realtime-interview-avatar")
+                    # To:     os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    if grep -q 'os.chdir("c:' "$PRECOMPUTE_SCRIPT" 2>/dev/null; then
+                        echo -e "  ${YELLOW}Fixing hardcoded Windows path in precompute_avatar.py...${NC}"
+                        sed -i 's|os.chdir("c:/NewAvata/NewAvata/realtime-interview-avatar")|os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))|g' "$PRECOMPUTE_SCRIPT"
+                        echo -e "  ${GREEN}Hardcoded path fixed${NC}"
+                    fi
+
                     # Set PYTHONPATH to include MuseTalk module
                     MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
                     if [ -d "$MUSETALK_PATH" ]; then
