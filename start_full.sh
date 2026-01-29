@@ -1187,19 +1187,27 @@ if [ -n "$DIFFUSERS_PATH" ] && [ -d "$DIFFUSERS_PATH" ]; then
     echo "  diffusers patched" >> /tmp/newavata_startup.log
 fi
 
-# Check which server script to use
-if [ -f "run_server.sh" ]; then
-    echo "Using run_server.sh" >> /tmp/newavata_startup.log
-    chmod +x run_server.sh
-    bash run_server.sh 2>&1 | tee -a /tmp/newavata_startup.log
-elif [ -f "main.py" ]; then
-    echo "Using main.py directly" >> /tmp/newavata_startup.log
-    python main.py --port 8001 2>&1 | tee -a /tmp/newavata_startup.log
-elif [ -f "app.py" ]; then
-    echo "Using app.py directly" >> /tmp/newavata_startup.log
-    uvicorn app:app --host 0.0.0.0 --port 8001 2>&1 | tee -a /tmp/newavata_startup.log
+# Kill any existing process on port 5000 or 8001
+echo "Killing existing processes on ports 5000 and 8001..." >> /tmp/newavata_startup.log
+fuser -k 5000/tcp 2>/dev/null || true
+fuser -k 8001/tcp 2>/dev/null || true
+sleep 2
+
+# Start app.py directly with port 8001
+# We patch the port in app.py before starting
+if [ -f "app.py" ]; then
+    echo "Patching app.py to use port 8001..." >> /tmp/newavata_startup.log
+
+    # Replace port 5000 with 8001 in the socketio.run line
+    if grep -q "port=5000" app.py; then
+        sed -i 's/port=5000/port=8001/g' app.py
+        echo "  Port changed to 8001" >> /tmp/newavata_startup.log
+    fi
+
+    echo "Starting app.py on port 8001..." >> /tmp/newavata_startup.log
+    python app.py 2>&1 | tee -a /tmp/newavata_startup.log
 else
-    echo "ERROR: No server script found!" >> /tmp/newavata_startup.log
+    echo "ERROR: app.py not found!" >> /tmp/newavata_startup.log
     echo "Available files:" >> /tmp/newavata_startup.log
     ls -la >> /tmp/newavata_startup.log
     sleep 300  # Keep session alive to debug
