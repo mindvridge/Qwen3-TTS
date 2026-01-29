@@ -1078,19 +1078,83 @@ else
     echo "WARNING: MuseTalk not found at $MUSETALK_PATH" >> /tmp/newavata_startup.log
 fi
 
-# Fix Whisper warmup bug (tuple instead of file path)
+# Fix Whisper warmup bug (tuple instead of file path) using Python
 echo "Fixing Whisper warmup bug..." >> /tmp/newavata_startup.log
 if [ -f "app.py" ]; then
-    # Patch 1: Replace get_audio_feature call with None
-    if grep -q "self.audio_processor.get_audio_feature((dummy_audio_np, 16000))" app.py 2>/dev/null; then
-        sed -i 's/whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))/whisper_features, librosa_len = None, 0  # PATCHED/' app.py
-        echo "  Fixed: get_audio_feature" >> /tmp/newavata_startup.log
-    fi
-    # Patch 2: Skip get_whisper_chunk if whisper_features is None
-    if grep -q "_ = self.audio_processor.get_whisper_chunk(" app.py 2>/dev/null; then
-        sed -i 's/_ = self.audio_processor.get_whisper_chunk(/pass  # PATCHED: _ = self.audio_processor.get_whisper_chunk(/' app.py
-        echo "  Fixed: get_whisper_chunk" >> /tmp/newavata_startup.log
-    fi
+    python3 << 'PATCH_SCRIPT'
+import re
+
+with open('app.py', 'r') as f:
+    content = f.read()
+
+modified = False
+
+# Pattern 1: Comment out the entire warmup_whisper method body
+# Find: def warmup_whisper(self): ... and wrap problematic code in try/except
+if 'def warmup_whisper(self):' in content and 'PATCHED_WARMUP' not in content:
+    # Find the warmup_whisper method and add try/except wrapper
+    pattern = r'(def warmup_whisper\(self\):.*?)(dummy_audio_np = np\.zeros.*?get_whisper_chunk\([^)]*\))'
+
+    def replace_warmup(match):
+        prefix = match.group(1)
+        body = match.group(2)
+        # Indent the body and wrap in try/except
+        indented_body = '\n'.join('    ' + line if line.strip() else line for line in body.split('\n'))
+        return prefix + "# PATCHED_WARMUP: Skip problematic warmup\n        try:\n" + indented_body + "\n        except Exception as e:\n            print(f'Warmup skipped: {e}')"
+
+    new_content, count = re.subn(pattern, replace_warmup, content, flags=re.DOTALL)
+    if count > 0:
+        content = new_content
+        modified = True
+        print('  Applied try/except wrapper to warmup_whisper')
+
+# Fallback: Simple replacement if pattern not found
+if not modified and 'self.audio_processor.get_audio_feature((dummy_audio_np, 16000))' in content:
+    # Just comment out the problematic lines
+    lines = content.split('\n')
+    new_lines = []
+    skip_until_dedent = False
+    base_indent = 0
+
+    for i, line in enumerate(lines):
+        if 'whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))' in line:
+            indent = len(line) - len(line.lstrip())
+            new_lines.append(' ' * indent + '# PATCHED: Whisper warmup disabled')
+            new_lines.append(' ' * indent + 'whisper_features, librosa_len = None, 0')
+            skip_until_dedent = False
+            modified = True
+        elif '_ = self.audio_processor.get_whisper_chunk(' in line:
+            indent = len(line) - len(line.lstrip())
+            new_lines.append(' ' * indent + '# PATCHED: get_whisper_chunk disabled')
+            new_lines.append(' ' * indent + 'pass')
+            # Skip the multi-line call
+            skip_until_dedent = True
+            base_indent = indent
+        elif skip_until_dedent:
+            current_indent = len(line) - len(line.lstrip()) if line.strip() else base_indent + 1
+            if line.strip() and current_indent <= base_indent and ')' not in lines[i-1]:
+                skip_until_dedent = False
+                new_lines.append(line)
+            elif ')' in line and current_indent > base_indent:
+                skip_until_dedent = False
+                # Skip this closing line too
+            else:
+                pass  # Skip this line
+        else:
+            new_lines.append(line)
+
+    if modified:
+        content = '\n'.join(new_lines)
+        print('  Applied line-by-line patch')
+
+if modified:
+    with open('app.py', 'w') as f:
+        f.write(content)
+    print('  Whisper warmup bug fixed!')
+else:
+    print('  No patch needed or already patched')
+PATCH_SCRIPT
+    echo "  Patch script completed" >> /tmp/newavata_startup.log
 fi
 
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
