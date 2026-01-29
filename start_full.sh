@@ -23,6 +23,17 @@ echo "  Qwen3-TTS + NewAvata Full Stack Setup"
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
 echo "==========================================="
 
+# Auto-update Qwen3-TTS from GitHub
+echo -e "\n${YELLOW}[0/7] Updating Qwen3-TTS...${NC}"
+cd "$SCRIPT_DIR"
+if git rev-parse --git-dir > /dev/null 2>&1; then
+    git pull --ff-only 2>/dev/null && \
+        echo -e "  ${GREEN}Qwen3-TTS updated${NC}" || \
+        echo -e "  ${CYAN}Using current Qwen3-TTS code${NC}"
+else
+    echo -e "  ${CYAN}Not a git repository, skipping update${NC}"
+fi
+
 # Check GPU memory to recommend mode
 echo -e "\n${YELLOW}[1/7] Checking GPU...${NC}"
 GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
