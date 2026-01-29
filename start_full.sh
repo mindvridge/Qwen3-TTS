@@ -1059,6 +1059,43 @@ DOWNLOAD_SAMPLE
     echo -e "  ${GREEN}Avatar setup completed${NC}"
 fi
 
+# Fix nested directory structure for precomputed avatars
+# NewAvata precompute creates: precomputed/name.pkl/name_precomputed.pkl (directory with file inside)
+# But API expects: precomputed/name.pkl (file)
+# Solution: Create symlinks from expected location to actual files
+echo -e "\n  ${CYAN}Checking precomputed avatar structure...${NC}"
+
+if [ -d "$PRECOMPUTED_DIR" ]; then
+    FIXED_COUNT=0
+    for item in "$PRECOMPUTED_DIR"/*.pkl; do
+        if [ -d "$item" ]; then
+            # It's a directory, need to create symlink
+            dir_name=$(basename "$item")
+            base_name="${dir_name%.pkl}"
+
+            # Find the actual .pkl file inside
+            inner_pkl=$(find "$item" -maxdepth 1 -name "*.pkl" -type f | head -1)
+
+            if [ -n "$inner_pkl" ] && [ -f "$inner_pkl" ]; then
+                # Rename directory and create symlink
+                backup_dir="${item}_dir"
+                if [ ! -d "$backup_dir" ]; then
+                    mv "$item" "$backup_dir"
+                    ln -sf "$backup_dir/$(basename $inner_pkl)" "$item"
+                    echo -e "    Fixed: ${CYAN}$dir_name${NC} -> $(basename $inner_pkl)"
+                    FIXED_COUNT=$((FIXED_COUNT + 1))
+                fi
+            fi
+        fi
+    done
+
+    if [ "$FIXED_COUNT" -gt 0 ]; then
+        echo -e "  ${GREEN}Fixed $FIXED_COUNT avatar symlink(s)${NC}"
+    else
+        echo -e "  ${GREEN}Avatar structure OK${NC}"
+    fi
+fi
+
 # Final avatar count and TensorRT note
 AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
 echo -e "\n  ${CYAN}Avatar Summary:${NC}"
