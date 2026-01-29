@@ -440,14 +440,74 @@ except Exception as e:
     fi
 
     # musetalkV15 symlink (NewAvata app.py looks for models in ./models/musetalkV15/)
-    if [ -f "$MODELS_DIR/musetalk/pytorch_model.bin" ] && [ ! -d "$MODELS_DIR/musetalkV15" ]; then
+    # NewAvata expects: unet.pth, musetalk.json, pytorch_model.bin
+    if [ -f "$MODELS_DIR/musetalk/pytorch_model.bin" ]; then
         echo -e "  ${YELLOW}Creating musetalkV15 symlinks...${NC}"
         mkdir -p "$MODELS_DIR/musetalkV15"
+
+        # Link pytorch_model.bin
         ln -sf "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/pytorch_model.bin" 2>/dev/null || \
             cp "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/pytorch_model.bin"
+
+        # Link musetalk.json
         [ -f "$MODELS_DIR/musetalk/musetalk.json" ] && \
             (ln -sf "$MODELS_DIR/musetalk/musetalk.json" "$MODELS_DIR/musetalkV15/musetalk.json" 2>/dev/null || \
              cp "$MODELS_DIR/musetalk/musetalk.json" "$MODELS_DIR/musetalkV15/musetalk.json")
+
+        # Download or link unet.pth (required by NewAvata's MuseTalk UNet)
+        # unet.pth is often the same as pytorch_model.bin, but some repos have it separate
+        if [ ! -f "$MODELS_DIR/musetalkV15/unet.pth" ]; then
+            # Try to download unet.pth from HuggingFace first
+            echo -e "    Downloading unet.pth..."
+            python3 -c "
+import os
+import shutil
+
+output = '$MODELS_DIR/musetalkV15/unet.pth'
+os.makedirs(os.path.dirname(output), exist_ok=True)
+
+# Try HuggingFace sources for unet.pth
+sources = [
+    ('TMElyralab/MuseTalk', 'models/musetalk/pytorch_model.bin'),
+    ('netease-youdao/musetalk', 'models/musetalk/pytorch_model.bin'),
+]
+
+downloaded = False
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in sources:
+        try:
+            print(f'  Trying: {repo_id}/{filename}')
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
+            shutil.copy(path, output)
+            print(f'  Downloaded unet.pth from {repo_id}')
+            downloaded = True
+            break
+        except Exception as e:
+            print(f'  Failed: {e}')
+except ImportError:
+    pass
+
+# Fallback: copy from pytorch_model.bin (they're often the same weights)
+if not downloaded:
+    src = '$MODELS_DIR/musetalk/pytorch_model.bin'
+    if os.path.exists(src):
+        print(f'  Copying from pytorch_model.bin as fallback')
+        shutil.copy(src, output)
+        downloaded = True
+
+exit(0 if downloaded else 1)
+" 2>/dev/null
+            if [ $? -eq 0 ]; then
+                echo -e "    ${GREEN}unet.pth downloaded${NC}"
+            else
+                # Final fallback: symlink to pytorch_model.bin
+                echo -e "    ${YELLOW}Using pytorch_model.bin as unet.pth${NC}"
+                ln -sf "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/unet.pth" 2>/dev/null || \
+                    cp "$MODELS_DIR/musetalk/pytorch_model.bin" "$MODELS_DIR/musetalkV15/unet.pth"
+            fi
+        fi
+
         echo -e "    ${GREEN}musetalkV15 model linked${NC}"
     fi
 
