@@ -51,59 +51,36 @@ musetalk_output = os.path.expanduser('~/NewAvata/MuseTalk/models/face-parse-bise
 os.makedirs(os.path.dirname(output), exist_ok=True)
 os.makedirs(os.path.dirname(musetalk_output), exist_ok=True)
 
-# Direct URLs (most reliable)
-direct_urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
-]
-
-# HuggingFace sources (fallback)
+# HuggingFace sources (verified working as of Jan 2026)
 hf_sources = [
-    ('fffiloni/MuseTalk_models', 'face-parse-bisenet/79999_iter.pth'),
-    ('BadToBest/EchoMimic', 'pretrained_weights/face-parse-bisent/79999_iter.pth'),
-    ('vinthony/SadTalker', 'face_parse/79999_iter.pth'),
+    ('vivym/face-parsing-bisenet', '79999_iter.pth'),
+    ('ManyOtherFunctions/face-parse-bisent', '79999_iter.pth'),
+    ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
 downloaded = False
 
-# Try direct URLs first
-for url in direct_urls:
-    try:
-        print(f'  Trying direct URL: {url[:60]}...')
-        urllib.request.urlretrieve(url, output)
+# Try HuggingFace sources
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in hf_sources:
+        try:
+            print(f'  Trying HuggingFace: {repo_id}')
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
+            shutil.copy(path, output)
 
-        # Validate
-        print(f'  Validating with torch.load...')
-        torch.load(output, map_location='cpu', weights_only=False)
-        print(f'  SUCCESS from direct URL!')
-        downloaded = True
-        break
-    except Exception as e:
-        print(f'  Failed: {e}')
-        if os.path.exists(output):
-            os.remove(output)
-
-# Try HuggingFace sources if direct URLs failed
-if not downloaded:
-    try:
-        from huggingface_hub import hf_hub_download
-        for repo_id, filename in hf_sources:
-            try:
-                print(f'  Trying HuggingFace: {repo_id}')
-                path = hf_hub_download(repo_id=repo_id, filename=filename)
-                shutil.copy(path, output)
-
-                # Validate
-                print(f'  Validating with torch.load...')
-                torch.load(output, map_location='cpu', weights_only=False)
-                print(f'  SUCCESS from {repo_id}!')
-                downloaded = True
-                break
-            except Exception as e:
-                print(f'  Failed: {e}')
-                if os.path.exists(output):
-                    os.remove(output)
-    except ImportError:
-        print('  huggingface_hub not available, skipping HF sources')
+            # Validate
+            print(f'  Validating with torch.load...')
+            torch.load(output, map_location='cpu', weights_only=False)
+            print(f'  SUCCESS from {repo_id}!')
+            downloaded = True
+            break
+        except Exception as e:
+            print(f'  Failed: {e}')
+            if os.path.exists(output):
+                os.remove(output)
+except ImportError:
+    print('  huggingface_hub not available')
 
 if downloaded:
     # Copy to MuseTalk location too

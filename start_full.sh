@@ -334,52 +334,32 @@ import torch
 output = '$FACEPARSE_MODEL'
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
-# Method 1: Try direct URLs FIRST (most reliable)
-direct_urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+# HuggingFace sources (verified working as of Jan 2026)
+hf_sources = [
+    ('vivym/face-parsing-bisenet', '79999_iter.pth'),
+    ('ManyOtherFunctions/face-parse-bisent', '79999_iter.pth'),
+    ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
 downloaded = False
-for url in direct_urls:
-    try:
-        print(f'  Trying direct URL: {url[:60]}...')
-        urllib.request.urlretrieve(url, output)
-        if os.path.getsize(output) > 1000000:
-            # Validate
-            torch.load(output, map_location='cpu', weights_only=False)
-            print(f'  SUCCESS from direct URL!')
-            downloaded = True
-            break
-    except Exception as e:
-        print(f'  Failed: {e}')
-        if os.path.exists(output):
-            os.remove(output)
-
-# Method 2: Try HuggingFace sources (fallback)
-if not downloaded:
-    try:
-        from huggingface_hub import hf_hub_download
-        hf_sources = [
-            ('fffiloni/MuseTalk_models', 'face-parse-bisenet/79999_iter.pth'),
-            ('BadToBest/EchoMimic', 'pretrained_weights/face-parse-bisent/79999_iter.pth'),
-            ('vinthony/SadTalker', 'face_parse/79999_iter.pth'),
-        ]
-        for repo_id, filename in hf_sources:
-            try:
-                print(f'  Trying HuggingFace: {repo_id}')
-                path = hf_hub_download(repo_id=repo_id, filename=filename)
-                shutil.copy(path, output)
-                if os.path.getsize(output) > 1000000:
-                    torch.load(output, map_location='cpu', weights_only=False)
-                    print(f'  SUCCESS from {repo_id}!')
-                    downloaded = True
-                    break
-            except Exception as e:
-                print(f'  Failed: {e}')
-                if os.path.exists(output):
-                    os.remove(output)
-    except ImportError:
-        print('  huggingface_hub not available')
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in hf_sources:
+        try:
+            print(f'  Trying HuggingFace: {repo_id}')
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
+            shutil.copy(path, output)
+            if os.path.getsize(output) > 1000000:
+                torch.load(output, map_location='cpu', weights_only=False)
+                print(f'  SUCCESS from {repo_id}!')
+                downloaded = True
+                break
+        except Exception as e:
+            print(f'  Failed: {e}')
+            if os.path.exists(output):
+                os.remove(output)
+except ImportError:
+    print('  huggingface_hub not available')
 
 if not downloaded:
     print('  Warning: Could not download FaceParse model')
@@ -516,48 +496,31 @@ output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
-# Direct URLs first (most reliable)
-direct_urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+# HuggingFace sources (verified working as of Jan 2026)
+sources = [
+    ('vivym/face-parsing-bisenet', '79999_iter.pth'),
+    ('ManyOtherFunctions/face-parse-bisent', '79999_iter.pth'),
+    ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
 downloaded = False
-for url in direct_urls:
-    try:
-        print(f'  Trying direct URL: {url[:60]}...')
-        urllib.request.urlretrieve(url, output)
-        torch.load(output, map_location='cpu', weights_only=False)
-        print(f'  SUCCESS from direct URL!')
-        downloaded = True
-        break
-    except Exception as e:
-        print(f'  Failed: {e}')
-        if os.path.exists(output):
-            os.remove(output)
-
-# HuggingFace fallback
-if not downloaded:
-    try:
-        from huggingface_hub import hf_hub_download
-        sources = [
-            ('fffiloni/MuseTalk_models', 'face-parse-bisenet/79999_iter.pth'),
-            ('BadToBest/EchoMimic', 'pretrained_weights/face-parse-bisent/79999_iter.pth'),
-        ]
-        for repo_id, filename in sources:
-            try:
-                print(f'  Trying HuggingFace: {repo_id}')
-                path = hf_hub_download(repo_id=repo_id, filename=filename)
-                shutil.copy(path, output)
-                torch.load(output, map_location='cpu', weights_only=False)
-                print(f'  SUCCESS from {repo_id}')
-                downloaded = True
-                break
-            except Exception as e:
-                print(f'  Failed: {e}')
-                if os.path.exists(output):
-                    os.remove(output)
-    except ImportError:
-        pass
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in sources:
+        try:
+            print(f'  Trying HuggingFace: {repo_id}')
+            path = hf_hub_download(repo_id=repo_id, filename=filename)
+            shutil.copy(path, output)
+            torch.load(output, map_location='cpu', weights_only=False)
+            print(f'  SUCCESS from {repo_id}')
+            downloaded = True
+            break
+        except Exception as e:
+            print(f'  Failed: {e}')
+            if os.path.exists(output):
+                os.remove(output)
+except ImportError:
+    pass
 
 exit(0 if downloaded else 1)
 DOWNLOAD_FACEPARSE
@@ -599,50 +562,31 @@ output = os.environ.get('FACEPARSE_MODEL',
     os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/face-parse-bisent/79999_iter.pth'))
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
-# Direct URLs FIRST (most reliable)
-direct_urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+# HuggingFace sources (verified working as of Jan 2026)
+sources = [
+    ('vivym/face-parsing-bisenet', '79999_iter.pth'),
+    ('ManyOtherFunctions/face-parse-bisent', '79999_iter.pth'),
+    ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
 downloaded = False
-
-# Try direct URLs first
-for url in direct_urls:
-    try:
-        print(f'  Trying direct URL: {url[:50]}...')
-        urllib.request.urlretrieve(url, output)
-        torch.load(output, map_location='cpu', weights_only=False)
-        print(f'  SUCCESS from direct URL!')
-        downloaded = True
-        break
-    except Exception as e:
-        print(f'  Failed: {e}')
-        if os.path.exists(output):
-            os.remove(output)
-
-# Try HuggingFace sources as fallback
-if not downloaded:
-    try:
-        from huggingface_hub import hf_hub_download
-        sources = [
-            ('fffiloni/MuseTalk_models', 'face-parse-bisenet/79999_iter.pth'),
-            ('BadToBest/EchoMimic', 'pretrained_weights/face-parse-bisent/79999_iter.pth'),
-        ]
-        for repo_id, filename in sources:
-            try:
-                print(f'  Trying HF: {repo_id}')
-                path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
-                shutil.copy(path, output)
-                torch.load(output, map_location='cpu', weights_only=False)
-                print(f'  SUCCESS from {repo_id}')
-                downloaded = True
-                break
-            except Exception as e:
-                print(f'  Failed: {e}')
-                if os.path.exists(output):
-                    os.remove(output)
-    except ImportError:
-        pass
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in sources:
+        try:
+            print(f'  Trying HuggingFace: {repo_id}')
+            path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+            shutil.copy(path, output)
+            torch.load(output, map_location='cpu', weights_only=False)
+            print(f'  SUCCESS from {repo_id}')
+            downloaded = True
+            break
+        except Exception as e:
+            print(f'  Failed: {e}')
+            if os.path.exists(output):
+                os.remove(output)
+except ImportError:
+    pass
 
 exit(0 if downloaded else 1)
 RETRY_DOWNLOAD
@@ -662,7 +606,7 @@ RETRY_DOWNLOAD
     if [ "$MODELS_VALID" = false ]; then
         echo -e "\n${RED}=== FATAL: Could not download FaceParse model after 3 retries ===${NC}"
         echo -e "${YELLOW}Please manually download the model:${NC}"
-        echo -e "  1. Visit: https://huggingface.co/camenduru/MuseTalk/tree/main/models/face-parse-bisent"
+        echo -e "  1. Visit: https://huggingface.co/vivym/face-parsing-bisenet/tree/main"
         echo -e "  2. Download: 79999_iter.pth"
         echo -e "  3. Place in: $FACEPARSE_MODEL"
         echo -e ""
@@ -716,60 +660,38 @@ newavata_path = os.path.expanduser('~/NewAvata/realtime-interview-avatar/models/
 os.makedirs(os.path.dirname(musetalk_path), exist_ok=True)
 os.makedirs(os.path.dirname(newavata_path), exist_ok=True)
 
-# Direct URLs FIRST (most reliable)
-direct_urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+# HuggingFace sources (verified working as of Jan 2026)
+sources = [
+    ('vivym/face-parsing-bisenet', '79999_iter.pth'),
+    ('ManyOtherFunctions/face-parse-bisent', '79999_iter.pth'),
+    ('afrizalha/musetalk-models', 'face-parse-bisent/79999_iter.pth'),
 ]
 
 downloaded = False
+try:
+    from huggingface_hub import hf_hub_download
+    for repo_id, filename in sources:
+        try:
+            print(f'  Trying HuggingFace: {repo_id}...')
+            path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
+            shutil.copy(path, musetalk_path)
+            shutil.copy(path, newavata_path)
 
-# Try direct URL first
-for url in direct_urls:
-    try:
-        print(f'  Downloading from GitHub...')
-        urllib.request.urlretrieve(url, musetalk_path)
-        shutil.copy(musetalk_path, newavata_path)
+            # Validate both
+            print(f'  Validating MuseTalk location...')
+            torch.load(musetalk_path, map_location='cpu', weights_only=False)
+            print(f'  Validating NewAvata location...')
+            torch.load(newavata_path, map_location='cpu', weights_only=False)
 
-        # Validate both
-        print(f'  Validating MuseTalk location...')
-        torch.load(musetalk_path, map_location='cpu', weights_only=False)
-        print(f'  Validating NewAvata location...')
-        torch.load(newavata_path, map_location='cpu', weights_only=False)
-
-        print(f'  SUCCESS: FaceParse model installed to both locations')
-        downloaded = True
-        exit(0)
-    except Exception as e:
-        print(f'  Failed from direct URL: {e}')
-        for p in [musetalk_path, newavata_path]:
-            if os.path.exists(p):
-                os.remove(p)
-
-# HuggingFace fallback
-if not downloaded:
-    try:
-        from huggingface_hub import hf_hub_download
-        sources = [
-            ('fffiloni/MuseTalk_models', 'face-parse-bisenet/79999_iter.pth'),
-            ('BadToBest/EchoMimic', 'pretrained_weights/face-parse-bisent/79999_iter.pth'),
-        ]
-        for repo_id, filename in sources:
-            try:
-                print(f'  Trying HuggingFace: {repo_id}...')
-                path = hf_hub_download(repo_id=repo_id, filename=filename, resume_download=True)
-                shutil.copy(path, musetalk_path)
-                shutil.copy(path, newavata_path)
-                torch.load(musetalk_path, map_location='cpu', weights_only=False)
-                torch.load(newavata_path, map_location='cpu', weights_only=False)
-                print(f'  SUCCESS from {repo_id}')
-                exit(0)
-            except Exception as e:
-                print(f'  Failed from {repo_id}: {e}')
-                for p in [musetalk_path, newavata_path]:
-                    if os.path.exists(p):
-                        os.remove(p)
-    except ImportError:
-        pass
+            print(f'  SUCCESS from {repo_id}')
+            exit(0)
+        except Exception as e:
+            print(f'  Failed from {repo_id}: {e}')
+            for p in [musetalk_path, newavata_path]:
+                if os.path.exists(p):
+                    os.remove(p)
+except ImportError:
+    pass
 
 print('  ERROR: Could not download valid FaceParse model')
 exit(1)
