@@ -354,6 +354,13 @@ else
             fi
 
             if [ -n "$PRECOMPUTE_SCRIPT" ]; then
+                # Set PYTHONPATH to include MuseTalk module
+                MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
+                if [ -d "$MUSETALK_PATH" ]; then
+                    export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
+                    echo -e "  ${GREEN}PYTHONPATH set to include MuseTalk${NC}"
+                fi
+
                 # Process each video in assets/
                 for video in "$ASSETS_DIR"/*.mp4; do
                     if [ -f "$video" ]; then
@@ -362,9 +369,12 @@ else
 
                         if [ ! -f "$output_pkl" ]; then
                             echo -e "    Processing: ${CYAN}$basename${NC}..."
-                            python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>/dev/null && \
-                                echo -e "    ${GREEN}✓ $basename precomputed${NC}" || \
+                            python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>&1 | tail -5
+                            if [ -f "$output_pkl" ]; then
+                                echo -e "    ${GREEN}✓ $basename precomputed${NC}"
+                            else
                                 echo -e "    ${YELLOW}✗ $basename failed${NC}"
+                            fi
                         else
                             echo -e "    ${GREEN}✓ $basename already exists${NC}"
                         fi
