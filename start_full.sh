@@ -281,6 +281,33 @@ if not downloaded:
         echo -e "  ${GREEN}FaceParse model already exists${NC}"
     fi
 
+    # Fix 3: SD-VAE model (required for MuseTalk VAE)
+    SDVAE_MODEL="$MODELS_DIR/sd-vae/config.json"
+    if [ ! -f "$SDVAE_MODEL" ]; then
+        echo -e "  Downloading SD-VAE model..."
+        mkdir -p "$MODELS_DIR/sd-vae"
+        python -c "
+from huggingface_hub import snapshot_download
+import os
+
+output_dir = '$MODELS_DIR/sd-vae'
+os.makedirs(output_dir, exist_ok=True)
+
+try:
+    print('  Downloading stabilityai/sd-vae-ft-mse...')
+    snapshot_download(
+        repo_id='stabilityai/sd-vae-ft-mse',
+        local_dir=output_dir,
+        local_dir_use_symlinks=False
+    )
+    print('  SD-VAE downloaded!')
+except Exception as e:
+    print(f'  Warning: SD-VAE download failed: {e}')
+" && echo -e "  ${GREEN}SD-VAE model downloaded${NC}" || echo -e "  ${YELLOW}SD-VAE model download skipped${NC}"
+    else
+        echo -e "  ${GREEN}SD-VAE model already exists${NC}"
+    fi
+
     # Deactivate venv
     deactivate 2>/dev/null || true
 fi
