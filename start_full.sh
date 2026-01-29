@@ -343,14 +343,14 @@ else
             echo -e "  Found ${CYAN}$VIDEO_COUNT${NC} video(s) in assets/"
             echo -e "  ${YELLOW}Generating precomputed avatars (3.9GB total, may take 5-10 min)...${NC}"
 
-            # Find precompute script
+            # Find precompute script (NewAvata uses scripts/precompute_avatar.py)
             PRECOMPUTE_SCRIPT=""
-            if [ -f "precompute.py" ]; then
+            if [ -f "scripts/precompute_avatar.py" ]; then
+                PRECOMPUTE_SCRIPT="scripts/precompute_avatar.py"
+            elif [ -f "precompute.py" ]; then
                 PRECOMPUTE_SCRIPT="precompute.py"
             elif [ -f "scripts/precompute.py" ]; then
                 PRECOMPUTE_SCRIPT="scripts/precompute.py"
-            elif [ -f "MuseTalk/scripts/preprocess.py" ]; then
-                PRECOMPUTE_SCRIPT="MuseTalk/scripts/preprocess.py"
             fi
 
             if [ -n "$PRECOMPUTE_SCRIPT" ]; then
@@ -436,15 +436,85 @@ if command -v tmux &> /dev/null; then
     tmux kill-session -t newavata 2>/dev/null || true
 
     # Start NewAvata server in tmux
-    if [ -d "$NEWAVATA_APP_DIR" ] && [ -f "$NEWAVATA_APP_DIR/run_server.sh" ]; then
-        tmux new-session -d -s newavata -c "$NEWAVATA_APP_DIR" "bash run_server.sh"
-        echo -e "  ${GREEN}NewAvata server started (tmux session: newavata)${NC}"
+    NEWAVATA_LOG="/tmp/newavata_startup.log"
+    if [ -d "$NEWAVATA_APP_DIR" ]; then
+        cd "$NEWAVATA_APP_DIR"
+
+        # Create a startup wrapper script for better logging
+        cat > /tmp/start_newavata.sh << 'NEWAVATA_SCRIPT'
+#!/bin/bash
+cd "$1"
+echo "=== NewAvata Startup ===" > /tmp/newavata_startup.log
+echo "Working dir: $(pwd)" >> /tmp/newavata_startup.log
+echo "Date: $(date)" >> /tmp/newavata_startup.log
+echo "" >> /tmp/newavata_startup.log
+
+# Activate venv if exists
+if [ -f "venv/bin/activate" ]; then
+    echo "Activating venv..." >> /tmp/newavata_startup.log
+    source venv/bin/activate
+fi
+
+# Check which server script to use
+if [ -f "run_server.sh" ]; then
+    echo "Using run_server.sh" >> /tmp/newavata_startup.log
+    chmod +x run_server.sh
+    bash run_server.sh 2>&1 | tee -a /tmp/newavata_startup.log
+elif [ -f "main.py" ]; then
+    echo "Using main.py directly" >> /tmp/newavata_startup.log
+    python main.py --port 8001 2>&1 | tee -a /tmp/newavata_startup.log
+elif [ -f "app.py" ]; then
+    echo "Using app.py directly" >> /tmp/newavata_startup.log
+    uvicorn app:app --host 0.0.0.0 --port 8001 2>&1 | tee -a /tmp/newavata_startup.log
+else
+    echo "ERROR: No server script found!" >> /tmp/newavata_startup.log
+    echo "Available files:" >> /tmp/newavata_startup.log
+    ls -la >> /tmp/newavata_startup.log
+    sleep 300  # Keep session alive to debug
+fi
+NEWAVATA_SCRIPT
+        chmod +x /tmp/start_newavata.sh
+
+        # Start tmux with the wrapper script
+        tmux new-session -d -s newavata "bash /tmp/start_newavata.sh '$NEWAVATA_APP_DIR'"
+
+        echo -e "  ${GREEN}NewAvata server starting (tmux session: newavata)${NC}"
         echo -e "    Port: ${CYAN}8001${NC}"
+        echo -e "    Log: ${CYAN}$NEWAVATA_LOG${NC}"
+    else
+        echo -e "  ${RED}NewAvata app directory not found: $NEWAVATA_APP_DIR${NC}"
     fi
 
-    # Wait for NewAvata to initialize
-    echo -e "  Waiting for NewAvata to initialize (10s)..."
-    sleep 10
+    # Wait for NewAvata to initialize and verify
+    echo -e "  Waiting for NewAvata to initialize (15s)..."
+    sleep 15
+
+    # Check if tmux session is still alive
+    if tmux has-session -t newavata 2>/dev/null; then
+        echo -e "  ${GREEN}NewAvata tmux session is running${NC}"
+
+        # Check if port 8001 is listening
+        if command -v lsof &> /dev/null; then
+            if lsof -i :8001 &>/dev/null; then
+                echo -e "  ${GREEN}Port 8001 is listening${NC}"
+            else
+                echo -e "  ${YELLOW}Port 8001 not yet listening (may still be starting)${NC}"
+                echo -e "  ${CYAN}Check logs: cat $NEWAVATA_LOG${NC}"
+            fi
+        elif command -v ss &> /dev/null; then
+            if ss -tln | grep -q ":8001"; then
+                echo -e "  ${GREEN}Port 8001 is listening${NC}"
+            else
+                echo -e "  ${YELLOW}Port 8001 not yet listening (may still be starting)${NC}"
+            fi
+        fi
+    else
+        echo -e "  ${RED}NewAvata tmux session died!${NC}"
+        echo -e "  ${CYAN}Startup log:${NC}"
+        cat "$NEWAVATA_LOG" 2>/dev/null | head -30
+        echo -e "\n  ${YELLOW}Try running manually:${NC}"
+        echo -e "    cd $NEWAVATA_APP_DIR && source venv/bin/activate && python main.py"
+    fi
 
     # Start TTS server in foreground
     cd "$SCRIPT_DIR"
@@ -469,17 +539,34 @@ else
     echo -e "  ${YELLOW}tmux not found, using background processes${NC}"
 
     # Start NewAvata in background
-    if [ -d "$NEWAVATA_APP_DIR" ] && [ -f "$NEWAVATA_APP_DIR/run_server.sh" ]; then
+    if [ -d "$NEWAVATA_APP_DIR" ]; then
         cd "$NEWAVATA_APP_DIR"
-        nohup bash run_server.sh > /tmp/newavata.log 2>&1 &
+
+        # Activate venv if exists
+        if [ -f "venv/bin/activate" ]; then
+            source venv/bin/activate
+        fi
+
+        # Start server (try multiple methods)
+        NEWAVATA_LOG="/tmp/newavata.log"
+        if [ -f "run_server.sh" ]; then
+            nohup bash run_server.sh > "$NEWAVATA_LOG" 2>&1 &
+        elif [ -f "main.py" ]; then
+            nohup python main.py --port 8001 > "$NEWAVATA_LOG" 2>&1 &
+        elif [ -f "app.py" ]; then
+            nohup uvicorn app:app --host 0.0.0.0 --port 8001 > "$NEWAVATA_LOG" 2>&1 &
+        fi
+
         NEWAVATA_PID=$!
         echo -e "  ${GREEN}NewAvata started (PID: $NEWAVATA_PID)${NC}"
-        echo -e "    Log: /tmp/newavata.log"
+        echo -e "    Log: $NEWAVATA_LOG"
+
+        deactivate 2>/dev/null || true
     fi
 
     # Wait for NewAvata
-    echo -e "  Waiting for NewAvata to initialize (10s)..."
-    sleep 10
+    echo -e "  Waiting for NewAvata to initialize (15s)..."
+    sleep 15
 
     # Start TTS server
     cd "$SCRIPT_DIR"
