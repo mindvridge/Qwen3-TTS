@@ -1078,53 +1078,84 @@ else
     echo "WARNING: MuseTalk not found at $MUSETALK_PATH" >> /tmp/newavata_startup.log
 fi
 
-# Fix Whisper warmup bug - simple method: replace entire warmup_whisper body
+# Fix Whisper warmup bug in load_models - the bug is passing tuple to get_audio_feature
 echo "Fixing Whisper warmup bug..." >> /tmp/newavata_startup.log
 if [ -f "app.py" ]; then
     python3 << 'PATCH_SCRIPT'
-import re
-
 with open('app.py', 'r') as f:
     content = f.read()
 
 # Check if already patched
-if 'PATCHED_WARMUP' in content:
+if 'PATCHED_WHISPER_WARMUP' in content:
     print('  Already patched')
 else:
-    # Simple approach: Find warmup_whisper method and make it do nothing
-    # Pattern matches: def warmup_whisper(self): followed by docstring and body
-    pattern = r'(def warmup_whisper\(self\):)\s*\n(\s+)("""[^"]*"""|\'\'\'[^\']*\'\'\')?'
+    modified = False
 
-    def replace_method(match):
-        method_def = match.group(1)
-        indent = match.group(2)
-        docstring = match.group(3) or ''
+    # The bug is in load_models: get_audio_feature((dummy_audio_np, 16000)) passes tuple instead of path
+    # We need to comment out the Whisper warmup section in load_models
 
-        # Keep docstring if exists, add pass with PATCHED marker
-        if docstring:
-            return f'{method_def}\n{indent}{docstring}\n{indent}# PATCHED_WARMUP: Disabled to avoid tuple error\n{indent}print("Whisper warmup skipped (patched)")\n{indent}return\n{indent}# Original code below (disabled):\n{indent}if False:'
-        else:
-            return f'{method_def}\n{indent}# PATCHED_WARMUP: Disabled to avoid tuple error\n{indent}print("Whisper warmup skipped (patched)")\n{indent}return\n{indent}# Original code below (disabled):\n{indent}if False:'
+    # Find and replace the problematic Whisper warmup code
+    # Pattern: "Whisper 워밍업" followed by the buggy code
+    old_code = 'print("    Whisper 워밍업...")'
+    if old_code in content:
+        # Find where this line is and wrap the following whisper warmup in try/except
+        lines = content.split('\n')
+        new_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if 'Whisper 워밍업' in line:
+                # Get the indentation
+                indent = len(line) - len(line.lstrip())
+                spaces = ' ' * indent
 
-    new_content, count = re.subn(pattern, replace_method, content)
+                # Add the original print but with patched marker
+                new_lines.append(f'{spaces}# PATCHED_WHISPER_WARMUP: Disabled problematic warmup')
+                new_lines.append(f'{spaces}print("    Whisper 워밍업... (SKIPPED - patched)")')
 
-    if count > 0:
+                # Skip the original print line and subsequent warmup code until we hit a different section
+                i += 1
+                # Skip until we find a line that starts a new section (not indented more, or new print statement)
+                while i < len(lines):
+                    next_line = lines[i]
+                    next_stripped = next_line.strip()
+                    next_indent = len(next_line) - len(next_line.lstrip()) if next_stripped else indent + 1
+
+                    # Stop if we hit a new section marker or less indentation
+                    if next_stripped.startswith('print(') and '워밍업' not in next_line and 'chunk' not in next_line.lower():
+                        break
+                    if next_stripped.startswith('self.whisper_processor') or next_stripped.startswith('return') or next_stripped.startswith('def '):
+                        break
+                    if next_indent < indent and next_stripped:
+                        break
+                    # Skip this line (comment it out)
+                    if next_stripped:
+                        new_lines.append(f'{spaces}# SKIPPED: {next_stripped}')
+                    i += 1
+                modified = True
+                continue
+            new_lines.append(line)
+            i += 1
+
+        if modified:
+            content = '\n'.join(new_lines)
+
+    # Alternative: Direct string replacement of the problematic line
+    if not modified:
+        # Replace the specific buggy line
+        old_line = 'whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))'
+        if old_line in content:
+            new_line = '# PATCHED_WHISPER_WARMUP: Disabled - tuple not supported\n            whisper_features, librosa_len = None, 0  # Warmup skipped'
+            content = content.replace(old_line, new_line)
+            modified = True
+            print('  Patched get_audio_feature line directly')
+
+    if modified:
         with open('app.py', 'w') as f:
-            f.write(new_content)
-        print(f'  Patched warmup_whisper method (disabled)')
+            f.write(content)
+        print('  Whisper warmup bug fixed!')
     else:
-        # Fallback: If pattern not found, try simpler approach
-        # Just add early return at the start of the method
-        if 'def warmup_whisper(self):' in content:
-            content = content.replace(
-                'def warmup_whisper(self):',
-                'def warmup_whisper(self):\n        # PATCHED_WARMUP: Disabled\n        print("Whisper warmup skipped"); return'
-            )
-            with open('app.py', 'w') as f:
-                f.write(content)
-            print('  Patched warmup_whisper with early return')
-        else:
-            print('  warmup_whisper method not found')
+        print('  No matching code found to patch')
 PATCH_SCRIPT
     echo "  Patch script completed" >> /tmp/newavata_startup.log
 fi
