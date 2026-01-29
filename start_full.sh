@@ -25,8 +25,10 @@ echo "==========================================="
 
 # Check GPU memory to recommend mode
 echo -e "\n${YELLOW}[1/7] Checking GPU...${NC}"
-GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
-if [ -n "$GPU_MEM" ]; then
+GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
+
+# Check if GPU_MEM is a valid number
+if [[ "$GPU_MEM" =~ ^[0-9]+$ ]]; then
     echo -e "  GPU Memory: ${CYAN}${GPU_MEM} MB${NC}"
     if [ "$GPU_MEM" -lt 50000 ]; then
         echo -e "  ${YELLOW}Warning: A100 40GB detected. Memory may be tight.${NC}"
@@ -35,7 +37,21 @@ if [ -n "$GPU_MEM" ]; then
         echo -e "  ${GREEN}A100 80GB detected. Full stack supported.${NC}"
     fi
 else
-    echo -e "  ${RED}Warning: Could not detect GPU${NC}"
+    # Try to get GPU name instead
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    if [ -n "$GPU_NAME" ]; then
+        echo -e "  GPU: ${CYAN}${GPU_NAME}${NC}"
+        if [[ "$GPU_NAME" == *"80GB"* ]]; then
+            echo -e "  ${GREEN}A100 80GB detected. Full stack supported.${NC}"
+        elif [[ "$GPU_NAME" == *"A100"* ]]; then
+            echo -e "  ${GREEN}A100 detected. Proceeding with setup.${NC}"
+        else
+            echo -e "  ${YELLOW}GPU detected: $GPU_NAME${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}Warning: Could not detect GPU memory (permission issue)${NC}"
+        echo -e "  ${CYAN}Proceeding with setup anyway...${NC}"
+    fi
 fi
 
 # Step 1: Setup Qwen3-TTS
@@ -112,7 +128,8 @@ if [ -d "$NEWAVATA_APP_DIR" ]; then
         echo -e "  Running NewAvata A100 deployment..."
         if [ -f "deploy_a100.sh" ]; then
             chmod +x deploy_a100.sh
-            ./deploy_a100.sh
+            # Run deploy_a100.sh with auto-yes for GFPGAN prompt
+            yes | ./deploy_a100.sh || true
             touch .newavata_deployed
             echo -e "  ${GREEN}NewAvata deployed${NC}"
         else
@@ -123,6 +140,102 @@ if [ -d "$NEWAVATA_APP_DIR" ]; then
     fi
 else
     echo -e "  ${RED}NewAvata app directory not found${NC}"
+fi
+
+# Fix missing models (MuseTalk, FaceParse)
+echo -e "\n${YELLOW}[5.5/7] Checking and fixing missing models...${NC}"
+if [ -d "$NEWAVATA_APP_DIR" ]; then
+    cd "$NEWAVATA_APP_DIR"
+
+    # Activate venv if exists
+    if [ -f "venv/bin/activate" ]; then
+        source venv/bin/activate
+    fi
+
+    MODELS_DIR="$NEWAVATA_APP_DIR/models"
+
+    # Fix 1: MuseTalk model (pytorch_model.bin)
+    MUSETALK_MODEL="$MODELS_DIR/musetalk/pytorch_model.bin"
+    if [ ! -f "$MUSETALK_MODEL" ]; then
+        echo -e "  Downloading MuseTalk model..."
+        mkdir -p "$MODELS_DIR/musetalk"
+        python -c "
+from huggingface_hub import hf_hub_download
+import shutil
+import os
+
+# Download MuseTalk pytorch model
+try:
+    path = hf_hub_download(
+        repo_id='TMElyralab/MuseTalk',
+        filename='pytorch_model.bin',
+        local_dir='$MODELS_DIR/musetalk',
+        local_dir_use_symlinks=False
+    )
+    print(f'  Downloaded: {path}')
+except Exception as e:
+    # Try alternative: download musetalk.pt
+    try:
+        path = hf_hub_download(
+            repo_id='TMElyralab/MuseTalk',
+            filename='musetalk/pytorch_model.bin',
+            local_dir='$MODELS_DIR',
+            local_dir_use_symlinks=False
+        )
+        print(f'  Downloaded: {path}')
+    except Exception as e2:
+        print(f'  Warning: Could not download MuseTalk model: {e2}')
+" 2>/dev/null && echo -e "  ${GREEN}MuseTalk model downloaded${NC}" || echo -e "  ${YELLOW}MuseTalk model download skipped${NC}"
+    else
+        echo -e "  ${GREEN}MuseTalk model already exists${NC}"
+    fi
+
+    # Fix 2: FaceParse BiSeNet model (79999_iter.pth)
+    FACEPARSE_MODEL="$MODELS_DIR/face-parse-bisent/79999_iter.pth"
+    if [ ! -f "$FACEPARSE_MODEL" ]; then
+        echo -e "  Downloading FaceParse model..."
+        mkdir -p "$MODELS_DIR/face-parse-bisent"
+
+        # Try multiple sources
+        FACEPARSE_URLS=(
+            "https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth"
+            "https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/fooocus_inpaint_head.pth"
+        )
+
+        # Method 1: Direct download with wget
+        if wget -q --show-progress -O "$FACEPARSE_MODEL" "https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth" 2>/dev/null; then
+            echo -e "  ${GREEN}FaceParse model downloaded${NC}"
+        else
+            # Method 2: Try with Python
+            python -c "
+import urllib.request
+import os
+
+urls = [
+    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
+]
+
+output = '$FACEPARSE_MODEL'
+os.makedirs(os.path.dirname(output), exist_ok=True)
+
+for url in urls:
+    try:
+        print(f'  Trying: {url}')
+        urllib.request.urlretrieve(url, output)
+        if os.path.getsize(output) > 1000000:  # > 1MB
+            print(f'  Success!')
+            break
+    except Exception as e:
+        print(f'  Failed: {e}')
+        continue
+" 2>/dev/null && echo -e "  ${GREEN}FaceParse model downloaded${NC}" || echo -e "  ${YELLOW}FaceParse model download failed - may need manual download${NC}"
+        fi
+    else
+        echo -e "  ${GREEN}FaceParse model already exists${NC}"
+    fi
+
+    # Deactivate venv
+    deactivate 2>/dev/null || true
 fi
 
 # Create avatars directory
