@@ -316,6 +316,7 @@ fi
 echo -e "\n${YELLOW}[6/7] Setting up NewAvata avatars...${NC}"
 
 PRECOMPUTED_DIR="$NEWAVATA_APP_DIR/precomputed"
+ASSETS_DIR="$NEWAVATA_APP_DIR/assets"
 mkdir -p "$PRECOMPUTED_DIR"
 
 # Check for existing precomputed avatars
@@ -326,9 +327,8 @@ if [ "$AVATAR_COUNT" -gt 0 ]; then
         echo -e "    - $(basename "$f")"
     done
 else
-    echo -e "  ${YELLOW}No precomputed avatars found. Creating sample avatar...${NC}"
+    echo -e "  ${YELLOW}No precomputed avatars found. Generating from assets/...${NC}"
 
-    # Download sample avatar video from NewAvata releases or create from sample
     cd "$NEWAVATA_APP_DIR"
 
     # Activate venv
@@ -336,73 +336,92 @@ else
         source venv/bin/activate
     fi
 
-    # Check if sample video exists or download one
-    SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
-    if [ ! -f "$SAMPLE_VIDEO" ]; then
-        echo -e "  Downloading sample avatar video..."
-        # Try to download from NewAvata releases or use a CC0 talking head video
-        python -c "
+    # Check assets/ folder for source videos (pushed to GitHub ~36MB)
+    if [ -d "$ASSETS_DIR" ]; then
+        VIDEO_COUNT=$(ls -1 "$ASSETS_DIR/"*.mp4 2>/dev/null | wc -l)
+        if [ "$VIDEO_COUNT" -gt 0 ]; then
+            echo -e "  Found ${CYAN}$VIDEO_COUNT${NC} video(s) in assets/"
+            echo -e "  ${YELLOW}Generating precomputed avatars (3.9GB total, may take 5-10 min)...${NC}"
+
+            # Find precompute script
+            PRECOMPUTE_SCRIPT=""
+            if [ -f "precompute.py" ]; then
+                PRECOMPUTE_SCRIPT="precompute.py"
+            elif [ -f "scripts/precompute.py" ]; then
+                PRECOMPUTE_SCRIPT="scripts/precompute.py"
+            elif [ -f "MuseTalk/scripts/preprocess.py" ]; then
+                PRECOMPUTE_SCRIPT="MuseTalk/scripts/preprocess.py"
+            fi
+
+            if [ -n "$PRECOMPUTE_SCRIPT" ]; then
+                # Process each video in assets/
+                for video in "$ASSETS_DIR"/*.mp4; do
+                    if [ -f "$video" ]; then
+                        basename=$(basename "$video" .mp4)
+                        output_pkl="$PRECOMPUTED_DIR/${basename}.pkl"
+
+                        if [ ! -f "$output_pkl" ]; then
+                            echo -e "    Processing: ${CYAN}$basename${NC}..."
+                            python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>/dev/null && \
+                                echo -e "    ${GREEN}✓ $basename precomputed${NC}" || \
+                                echo -e "    ${YELLOW}✗ $basename failed${NC}"
+                        else
+                            echo -e "    ${GREEN}✓ $basename already exists${NC}"
+                        fi
+                    fi
+                done
+            else
+                echo -e "  ${YELLOW}Precompute script not found${NC}"
+                echo -e "  ${CYAN}Try running MuseTalk preprocessing manually:${NC}"
+                echo -e "    cd MuseTalk && python scripts/preprocess.py --video_path ../assets/your_video.mp4"
+            fi
+        else
+            echo -e "  ${YELLOW}No videos found in assets/${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}assets/ folder not found${NC}"
+    fi
+
+    # Fallback: download sample if no assets
+    if [ ! -d "$ASSETS_DIR" ] || [ "$(ls -1 "$ASSETS_DIR"/*.mp4 2>/dev/null | wc -l)" -eq 0 ]; then
+        SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
+        if [ ! -f "$SAMPLE_VIDEO" ]; then
+            echo -e "  Downloading sample avatar video..."
+            python -c "
 import urllib.request
 import os
 
 output = '$SAMPLE_VIDEO'
-
-# Sample talking head videos (CC0 license)
 urls = [
     'https://github.com/mindvridge/NewAvata/releases/download/v0.1/sample_avatar.mp4',
     'https://huggingface.co/datasets/mindvridge/avatar-samples/resolve/main/sample_avatar.mp4',
 ]
 
-downloaded = False
 for url in urls:
     try:
         print(f'  Trying: {url[:60]}...')
         urllib.request.urlretrieve(url, output)
         if os.path.getsize(output) > 100000:
             print('  Sample video downloaded!')
-            downloaded = True
             break
     except Exception as e:
         print(f'  Failed: {e}')
-
-if not downloaded:
-    print('  Could not download sample video')
-    print('  Please add your own video to: $NEWAVATA_APP_DIR/')
 " 2>/dev/null
-    fi
-
-    # Run precompute if sample video exists
-    if [ -f "$SAMPLE_VIDEO" ]; then
-        echo -e "  Running avatar precompute (this may take a few minutes)..."
-
-        # Check if precompute script exists
-        if [ -f "precompute.py" ]; then
-            python precompute.py --video "$SAMPLE_VIDEO" --output "$PRECOMPUTED_DIR/sample_avatar.pkl" 2>/dev/null && \
-                echo -e "  ${GREEN}Sample avatar precomputed!${NC}" || \
-                echo -e "  ${YELLOW}Precompute failed - will try at runtime${NC}"
-        elif [ -f "scripts/precompute.py" ]; then
-            python scripts/precompute.py --video "$SAMPLE_VIDEO" --output "$PRECOMPUTED_DIR/sample_avatar.pkl" 2>/dev/null && \
-                echo -e "  ${GREEN}Sample avatar precomputed!${NC}" || \
-                echo -e "  ${YELLOW}Precompute failed - will try at runtime${NC}"
-        else
-            echo -e "  ${YELLOW}Precompute script not found - avatar will be created at runtime${NC}"
         fi
-    else
-        echo -e "  ${YELLOW}No sample video available${NC}"
-        echo -e "  ${CYAN}To add an avatar:${NC}"
-        echo -e "    1. Add a video file to: $NEWAVATA_APP_DIR/"
-        echo -e "    2. Run: python precompute.py --video your_video.mp4"
     fi
 
     # Deactivate venv
     deactivate 2>/dev/null || true
 fi
 
-# Final avatar count
+# Final avatar count and TensorRT note
 AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
+echo -e "\n  ${CYAN}Avatar Summary:${NC}"
+echo -e "    Precomputed: ${GREEN}$AVATAR_COUNT${NC} avatar(s)"
+echo -e "    TensorRT:    ${YELLOW}Auto-generated on first inference (~5GB)${NC}"
+
 if [ "$AVATAR_COUNT" -eq 0 ]; then
-    echo -e "  ${YELLOW}Note: NewAvata can create avatars on-the-fly from video${NC}"
-    echo -e "  ${CYAN}Use avatar_path='auto' in API calls${NC}"
+    echo -e "\n  ${YELLOW}Note: Add videos to assets/ and re-run, or use avatar_path='auto'${NC}"
 fi
 
 # Start both servers
