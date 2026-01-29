@@ -423,6 +423,42 @@ else
                         echo -e "  ${GREEN}Hardcoded path fixed${NC}"
                     fi
 
+                    # Fix PyTorch 2.6 weights_only issue
+                    # PyTorch 2.6 changed default weights_only=True which breaks legacy .tar models
+                    echo -e "  ${YELLOW}Checking PyTorch 2.6 compatibility...${NC}"
+                    PYTORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null)
+                    echo -e "  PyTorch version: ${CYAN}$PYTORCH_VERSION${NC}"
+
+                    # Fix PyTorch 2.6 weights_only issue by patching source files
+                    # Add weights_only=False to all torch.load calls in MuseTalk and NewAvata
+                    echo -e "  ${YELLOW}Patching torch.load calls for PyTorch 2.6 compatibility...${NC}"
+
+                    # Patch files that use torch.load without weights_only parameter
+                    PATCH_DIRS=(
+                        "$NEWAVATA_DIR/MuseTalk"
+                        "$NEWAVATA_APP_DIR"
+                    )
+
+                    for patch_dir in "${PATCH_DIRS[@]}"; do
+                        if [ -d "$patch_dir" ]; then
+                            # Find and patch Python files with torch.load calls
+                            find "$patch_dir" -name "*.py" -type f 2>/dev/null | while read pyfile; do
+                                # Check if file has torch.load without weights_only
+                                if grep -q "torch\.load(" "$pyfile" 2>/dev/null; then
+                                    if ! grep -q "weights_only" "$pyfile" 2>/dev/null; then
+                                        # Patch: torch.load(X) -> torch.load(X, weights_only=False)
+                                        # Handle both torch.load(path) and torch.load(path, map_location=...)
+                                        sed -i 's/torch\.load(\([^)]*\))/torch.load(\1, weights_only=False)/g' "$pyfile" 2>/dev/null
+                                        # Fix double comma if map_location was present
+                                        sed -i 's/, , weights_only=False/, weights_only=False/g' "$pyfile" 2>/dev/null
+                                        echo -e "    ${CYAN}Patched: $(basename $pyfile)${NC}"
+                                    fi
+                                fi
+                            done
+                        fi
+                    done
+                    echo -e "  ${GREEN}torch.load patches applied${NC}"
+
                     # Set PYTHONPATH to include MuseTalk module
                     MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
                     if [ -d "$MUSETALK_PATH" ]; then
@@ -438,7 +474,7 @@ else
 
                             if [ ! -f "$output_pkl" ]; then
                                 echo -e "    Processing: ${CYAN}$basename${NC}..."
-                                python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>&1 | tail -5
+                                python "$PRECOMPUTE_SCRIPT" --video "$video" --output "$output_pkl" 2>&1 | tail -10
                                 if [ -f "$output_pkl" ]; then
                                     echo -e "    ${GREEN}✓ $basename precomputed${NC}"
                                 else
@@ -518,6 +554,52 @@ if command -v tmux &> /dev/null; then
     if [ -d "$NEWAVATA_APP_DIR" ]; then
         cd "$NEWAVATA_APP_DIR"
 
+        # Create PyTorch 2.6 patch wrapper
+        cat > /tmp/torch_patch_wrapper.py << 'TORCH_WRAPPER'
+#!/usr/bin/env python3
+# PyTorch 2.6 compatibility wrapper - patches torch.load before any imports
+import sys
+import functools
+
+# Patch torch.load immediately after torch is imported
+_original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+def _patched_import(name, *args, **kwargs):
+    module = _original_import(name, *args, **kwargs)
+    if name == 'torch' and not getattr(module, '_load_patched', False):
+        original_load = module.load
+        @functools.wraps(original_load)
+        def patched_load(*a, **kw):
+            if 'weights_only' not in kw:
+                kw['weights_only'] = False
+            return original_load(*a, **kw)
+        module.load = patched_load
+        module._load_patched = True
+        print("[PATCH] torch.load patched for PyTorch 2.6+ compatibility")
+    return module
+
+if hasattr(__builtins__, '__import__'):
+    __builtins__.__import__ = _patched_import
+else:
+    import builtins
+    builtins.__import__ = _patched_import
+
+# Now run the actual main module
+if __name__ == "__main__":
+    # Remove this wrapper from argv
+    sys.argv = sys.argv[1:] if len(sys.argv) > 1 else sys.argv
+
+    # Import and run main
+    if len(sys.argv) > 0 and sys.argv[0].endswith('.py'):
+        script = sys.argv[0]
+        sys.argv = sys.argv[1:]
+        with open(script) as f:
+            code = compile(f.read(), script, 'exec')
+            exec(code, {'__name__': '__main__', '__file__': script})
+    else:
+        import main
+TORCH_WRAPPER
+
         # Create a startup wrapper script for better logging
         cat > /tmp/start_newavata.sh << 'NEWAVATA_SCRIPT'
 #!/bin/bash
@@ -531,6 +613,33 @@ echo "" >> /tmp/newavata_startup.log
 if [ -f "venv/bin/activate" ]; then
     echo "Activating venv..." >> /tmp/newavata_startup.log
     source venv/bin/activate
+fi
+
+# Apply PyTorch 2.6 patches to source files (for diffusers etc.)
+echo "Applying PyTorch 2.6 patches..." >> /tmp/newavata_startup.log
+find . -name "*.py" -type f 2>/dev/null | while read pyfile; do
+    if grep -q "torch\.load(" "$pyfile" 2>/dev/null; then
+        if ! grep -q "weights_only" "$pyfile" 2>/dev/null; then
+            sed -i 's/torch\.load(\([^)]*\))/torch.load(\1, weights_only=False)/g' "$pyfile" 2>/dev/null
+            sed -i 's/, , weights_only=False/, weights_only=False/g' "$pyfile" 2>/dev/null
+            echo "  Patched: $pyfile" >> /tmp/newavata_startup.log
+        fi
+    fi
+done
+
+# Also patch diffusers library if present
+DIFFUSERS_PATH=$(python -c "import diffusers; print(diffusers.__path__[0])" 2>/dev/null)
+if [ -n "$DIFFUSERS_PATH" ] && [ -d "$DIFFUSERS_PATH" ]; then
+    echo "Patching diffusers library..." >> /tmp/newavata_startup.log
+    find "$DIFFUSERS_PATH" -name "*.py" -type f 2>/dev/null | while read pyfile; do
+        if grep -q "torch\.load(" "$pyfile" 2>/dev/null; then
+            if ! grep -q "weights_only" "$pyfile" 2>/dev/null; then
+                sed -i 's/torch\.load(\([^)]*\))/torch.load(\1, weights_only=False)/g' "$pyfile" 2>/dev/null
+                sed -i 's/, , weights_only=False/, weights_only=False/g' "$pyfile" 2>/dev/null
+            fi
+        fi
+    done
+    echo "  diffusers patched" >> /tmp/newavata_startup.log
 fi
 
 # Check which server script to use
