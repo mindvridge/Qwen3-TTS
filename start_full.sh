@@ -1078,6 +1078,13 @@ else
     echo "WARNING: MuseTalk not found at $MUSETALK_PATH" >> /tmp/newavata_startup.log
 fi
 
+# Fix Whisper warmup bug (tuple instead of file path)
+echo "Fixing Whisper warmup bug..." >> /tmp/newavata_startup.log
+if [ -f "app.py" ] && grep -q "self.audio_processor.get_audio_feature((dummy_audio_np, 16000))" app.py 2>/dev/null; then
+    sed -i 's/whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))/# Whisper warmup skipped (tuple not supported)\n            whisper_features, librosa_len = None, None/' app.py
+    echo "  Fixed: app.py whisper warmup" >> /tmp/newavata_startup.log
+fi
+
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
 echo "Applying PyTorch 2.6 patches..." >> /tmp/newavata_startup.log
 find . -name "*.py" -type f 2>/dev/null | while read pyfile; do
