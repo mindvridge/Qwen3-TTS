@@ -951,35 +951,112 @@ else
             echo -e "  ${YELLOW}assets/ folder not found${NC}"
         fi
 
-        # Fallback: download sample if no assets
-        if [ ! -d "$ASSETS_DIR" ] || [ "$(ls -1 "$ASSETS_DIR"/*.mp4 2>/dev/null | wc -l)" -eq 0 ]; then
-            SAMPLE_VIDEO="$NEWAVATA_APP_DIR/sample_avatar.mp4"
-            if [ ! -f "$SAMPLE_VIDEO" ]; then
-                echo -e "  Downloading sample avatar video..."
-                python -c "
+        # Fallback: download sample if no assets AND no precomputed avatars
+        CURRENT_AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
+        if [ "$CURRENT_AVATAR_COUNT" -eq 0 ]; then
+            echo -e "  ${YELLOW}No precomputed avatars exist. Creating sample avatar...${NC}"
+
+            mkdir -p "$ASSETS_DIR"
+            SAMPLE_VIDEO="$ASSETS_DIR/sample_avatar.mp4"
+
+            # Download sample video if not exists
+            if [ ! -f "$SAMPLE_VIDEO" ] || [ $(stat -c%s "$SAMPLE_VIDEO" 2>/dev/null || echo 0) -lt 100000 ]; then
+                echo -e "  ${CYAN}Downloading sample avatar video...${NC}"
+                python3 << 'DOWNLOAD_SAMPLE'
 import urllib.request
 import os
 
-output = '$SAMPLE_VIDEO'
+output = os.path.expanduser('~/NewAvata/realtime-interview-avatar/assets/sample_avatar.mp4')
+os.makedirs(os.path.dirname(output), exist_ok=True)
+
 urls = [
     'https://github.com/mindvridge/NewAvata/releases/download/v0.1/sample_avatar.mp4',
     'https://huggingface.co/datasets/mindvridge/avatar-samples/resolve/main/sample_avatar.mp4',
 ]
 
+downloaded = False
 for url in urls:
     try:
         print(f'  Trying: {url[:60]}...')
         urllib.request.urlretrieve(url, output)
-        if os.path.getsize(output) > 100000:
-            print('  Sample video downloaded!')
+        size = os.path.getsize(output)
+        if size > 100000:
+            print(f'  Downloaded: {size/1024/1024:.1f}MB')
+            downloaded = True
             break
+        else:
+            os.remove(output)
     except Exception as e:
         print(f'  Failed: {e}')
-" 2>/dev/null
+
+if not downloaded:
+    print('  ERROR: Could not download sample avatar video')
+    exit(1)
+print('  Sample video ready!')
+DOWNLOAD_SAMPLE
+
+                if [ $? -ne 0 ]; then
+                    echo -e "  ${RED}Failed to download sample video${NC}"
+                fi
+            else
+                echo -e "  ${GREEN}Sample video already exists${NC}"
+            fi
+
+            # Precompute the sample avatar
+            if [ -f "$SAMPLE_VIDEO" ]; then
+                OUTPUT_PKL="$PRECOMPUTED_DIR/sample_avatar.pkl"
+
+                if [ ! -f "$OUTPUT_PKL" ]; then
+                    echo -e "  ${CYAN}Precomputing sample avatar (this may take 5-10 minutes)...${NC}"
+
+                    # Find precompute script
+                    PRECOMPUTE_SCRIPT=""
+                    if [ -f "scripts/precompute_avatar.py" ]; then
+                        PRECOMPUTE_SCRIPT="scripts/precompute_avatar.py"
+                    elif [ -f "precompute.py" ]; then
+                        PRECOMPUTE_SCRIPT="precompute.py"
+                    elif [ -f "scripts/precompute.py" ]; then
+                        PRECOMPUTE_SCRIPT="scripts/precompute.py"
+                    fi
+
+                    if [ -n "$PRECOMPUTE_SCRIPT" ]; then
+                        # Fix hardcoded Windows path if present
+                        if grep -q 'os.chdir("c:' "$PRECOMPUTE_SCRIPT" 2>/dev/null; then
+                            echo -e "  ${YELLOW}Fixing hardcoded Windows path...${NC}"
+                            sed -i 's|os.chdir("c:/NewAvata/NewAvata/realtime-interview-avatar")|os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))|g' "$PRECOMPUTE_SCRIPT"
+                        fi
+
+                        # Set PYTHONPATH
+                        MUSETALK_PATH="$NEWAVATA_DIR/MuseTalk"
+                        if [ -d "$MUSETALK_PATH" ]; then
+                            export PYTHONPATH="${PYTHONPATH}:${MUSETALK_PATH}"
+                        fi
+
+                        echo -e "  Input:  $SAMPLE_VIDEO"
+                        echo -e "  Output: $OUTPUT_PKL"
+                        echo ""
+
+                        # Run precompute with progress output
+                        python "$PRECOMPUTE_SCRIPT" --video "$SAMPLE_VIDEO" --output "$OUTPUT_PKL" 2>&1 | while read line; do
+                            echo "    $line"
+                        done
+
+                        if [ -f "$OUTPUT_PKL" ]; then
+                            SIZE=$(du -h "$OUTPUT_PKL" 2>/dev/null | cut -f1)
+                            echo -e "  ${GREEN}Sample avatar precomputed successfully! ($SIZE)${NC}"
+                        else
+                            echo -e "  ${RED}Precompute failed - avatar file not created${NC}"
+                        fi
+                    else
+                        echo -e "  ${RED}Precompute script not found${NC}"
+                    fi
+                else
+                    echo -e "  ${GREEN}Sample avatar already precomputed${NC}"
+                fi
             fi
         fi
     )  # End of subshell - venv and PYTHONPATH changes are isolated
-    echo -e "  ${GREEN}Precompute subshell completed${NC}"
+    echo -e "  ${GREEN}Avatar setup completed${NC}"
 fi
 
 # Final avatar count and TensorRT note
