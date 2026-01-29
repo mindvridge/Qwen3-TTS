@@ -1080,10 +1080,17 @@ fi
 
 # Fix Whisper warmup bug (tuple instead of file path)
 echo "Fixing Whisper warmup bug..." >> /tmp/newavata_startup.log
-if [ -f "app.py" ] && grep -q "self.audio_processor.get_audio_feature((dummy_audio_np, 16000))" app.py 2>/dev/null; then
-    # Comment out the problematic line
-    sed -i 's/whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))/whisper_features, librosa_len = None, None  # PATCHED: tuple not supported/' app.py
-    echo "  Fixed: app.py whisper warmup" >> /tmp/newavata_startup.log
+if [ -f "app.py" ]; then
+    # Patch 1: Replace get_audio_feature call with None
+    if grep -q "self.audio_processor.get_audio_feature((dummy_audio_np, 16000))" app.py 2>/dev/null; then
+        sed -i 's/whisper_features, librosa_len = self.audio_processor.get_audio_feature((dummy_audio_np, 16000))/whisper_features, librosa_len = None, 0  # PATCHED/' app.py
+        echo "  Fixed: get_audio_feature" >> /tmp/newavata_startup.log
+    fi
+    # Patch 2: Skip get_whisper_chunk if whisper_features is None
+    if grep -q "_ = self.audio_processor.get_whisper_chunk(" app.py 2>/dev/null; then
+        sed -i 's/_ = self.audio_processor.get_whisper_chunk(/pass  # PATCHED: _ = self.audio_processor.get_whisper_chunk(/' app.py
+        echo "  Fixed: get_whisper_chunk" >> /tmp/newavata_startup.log
+    fi
 fi
 
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
