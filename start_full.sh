@@ -176,37 +176,47 @@ if [ -d "$NEWAVATA_APP_DIR" ]; then
 
     MODELS_DIR="$NEWAVATA_APP_DIR/models"
 
-    # Fix 1: MuseTalk model (pytorch_model.bin)
+    # Fix 1: MuseTalk model (pytorch_model.bin + musetalk.json)
     MUSETALK_MODEL="$MODELS_DIR/musetalk/pytorch_model.bin"
-    if [ ! -f "$MUSETALK_MODEL" ]; then
-        echo -e "  Downloading MuseTalk model..."
+    MUSETALK_JSON="$MODELS_DIR/musetalk/musetalk.json"
+    if [ ! -f "$MUSETALK_MODEL" ] || [ ! -f "$MUSETALK_JSON" ]; then
+        echo -e "  Downloading MuseTalk model files..."
         mkdir -p "$MODELS_DIR/musetalk"
         python -c "
 from huggingface_hub import hf_hub_download
 import shutil
 import os
 
-# Download MuseTalk pytorch model
-try:
-    path = hf_hub_download(
-        repo_id='TMElyralab/MuseTalk',
-        filename='pytorch_model.bin',
-        local_dir='$MODELS_DIR/musetalk',
-        local_dir_use_symlinks=False
-    )
-    print(f'  Downloaded: {path}')
-except Exception as e:
-    # Try alternative: download musetalk.pt
+output_dir = '$MODELS_DIR/musetalk'
+os.makedirs(output_dir, exist_ok=True)
+
+# Download pytorch_model.bin (3.4GB)
+model_file = os.path.join(output_dir, 'pytorch_model.bin')
+if not os.path.exists(model_file):
     try:
+        print('  Downloading pytorch_model.bin (3.4GB)...')
         path = hf_hub_download(
             repo_id='TMElyralab/MuseTalk',
-            filename='musetalk/pytorch_model.bin',
-            local_dir='$MODELS_DIR',
-            local_dir_use_symlinks=False
+            filename='musetalk/pytorch_model.bin'
         )
-        print(f'  Downloaded: {path}')
-    except Exception as e2:
-        print(f'  Warning: Could not download MuseTalk model: {e2}')
+        shutil.copy(path, model_file)
+        print(f'  Downloaded: pytorch_model.bin')
+    except Exception as e:
+        print(f'  Warning: pytorch_model.bin download failed: {e}')
+
+# Download musetalk.json (748B)
+json_file = os.path.join(output_dir, 'musetalk.json')
+if not os.path.exists(json_file):
+    try:
+        print('  Downloading musetalk.json...')
+        path = hf_hub_download(
+            repo_id='TMElyralab/MuseTalk',
+            filename='musetalk/musetalk.json'
+        )
+        shutil.copy(path, json_file)
+        print(f'  Downloaded: musetalk.json')
+    except Exception as e:
+        print(f'  Warning: musetalk.json download failed: {e}')
 " 2>/dev/null && echo -e "  ${GREEN}MuseTalk model downloaded${NC}" || echo -e "  ${YELLOW}MuseTalk model download skipped${NC}"
     else
         echo -e "  ${GREEN}MuseTalk model already exists${NC}"
