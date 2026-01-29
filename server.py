@@ -229,10 +229,10 @@ async def generate_voice_clone(request: VoiceCloneRequest, model_size: str = "0.
             # - Eliminates per-sentence embedding extraction inconsistency
             print(f"[DEBUG] Pre-computing voice clone prompt (speaker embedding + ICL codes)...")
             try:
+                # create_voice_clone_prompt signature: (ref_audio, ref_text=None, x_vector_only_mode=False)
                 voice_clone_prompt = model.create_voice_clone_prompt(
                     ref_audio=request.ref_audio,
                     ref_text=request.ref_text,
-                    target_language=request.language,
                     x_vector_only_mode=request.x_vector_only_mode,
                 )
                 print(f"[DEBUG] Voice clone prompt created successfully")
