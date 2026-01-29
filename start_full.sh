@@ -517,6 +517,32 @@ exit(0 if downloaded else 1)
     echo -e "  ${GREEN}Model check subshell completed${NC}"
 fi
 
+# CRITICAL: Ensure unet.pth exists (NewAvata requires this file)
+# This runs outside the subshell to guarantee the file is created
+NEWAVATA_DIR="${NEWAVATA_DIR:-$HOME/NewAvata}"
+NEWAVATA_APP_DIR="$NEWAVATA_DIR/realtime-interview-avatar"
+MODELS_DIR_CHECK="$NEWAVATA_APP_DIR/models"
+
+if [ ! -f "$MODELS_DIR_CHECK/musetalkV15/unet.pth" ]; then
+    echo -e "${YELLOW}[CRITICAL] Creating unet.pth for NewAvata...${NC}"
+    mkdir -p "$MODELS_DIR_CHECK/musetalkV15"
+
+    if [ -f "$MODELS_DIR_CHECK/musetalk/pytorch_model.bin" ]; then
+        cp "$MODELS_DIR_CHECK/musetalk/pytorch_model.bin" "$MODELS_DIR_CHECK/musetalkV15/unet.pth"
+        echo -e "  ${GREEN}unet.pth created from pytorch_model.bin${NC}"
+    else
+        echo -e "  ${RED}ERROR: pytorch_model.bin not found, cannot create unet.pth${NC}"
+    fi
+fi
+
+# Also ensure musetalk.json and pytorch_model.bin exist in musetalkV15
+if [ ! -f "$MODELS_DIR_CHECK/musetalkV15/musetalk.json" ] && [ -f "$MODELS_DIR_CHECK/musetalk/musetalk.json" ]; then
+    cp "$MODELS_DIR_CHECK/musetalk/musetalk.json" "$MODELS_DIR_CHECK/musetalkV15/musetalk.json"
+fi
+if [ ! -f "$MODELS_DIR_CHECK/musetalkV15/pytorch_model.bin" ] && [ -f "$MODELS_DIR_CHECK/musetalk/pytorch_model.bin" ]; then
+    cp "$MODELS_DIR_CHECK/musetalk/pytorch_model.bin" "$MODELS_DIR_CHECK/musetalkV15/pytorch_model.bin"
+fi
+
 # Final validation: Ensure all critical models are valid before proceeding
 echo -e "\n${YELLOW}[5.5/7] Final model validation...${NC}"
 MODELS_VALID=true
