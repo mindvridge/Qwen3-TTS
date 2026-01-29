@@ -86,24 +86,46 @@ else
     rm -rf "$WHEEL_DIR"
 fi
 
+# Install system dependencies (sox, ffmpeg)
+echo -e "\n${YELLOW}[3.5/7] Installing system dependencies...${NC}"
+if ! command -v sox &> /dev/null || ! command -v ffmpeg &> /dev/null; then
+    echo -e "  Installing sox and ffmpeg..."
+    sudo apt-get update -qq 2>/dev/null
+    sudo apt-get install -y -qq sox ffmpeg 2>/dev/null && \
+        echo -e "  ${GREEN}sox and ffmpeg installed${NC}" || \
+        echo -e "  ${YELLOW}Could not install sox/ffmpeg (may need manual install)${NC}"
+else
+    echo -e "  ${GREEN}sox and ffmpeg already installed${NC}"
+fi
+
 # Configure TTS .env
 echo -e "\n${YELLOW}[4/7] Configuring TTS environment...${NC}"
 if [ ! -f ".env" ]; then
     cp .env.example .env
 fi
 
-# Enable video mode with NewAvata API
-sed -i 's/ENABLE_VIDEO=false/ENABLE_VIDEO=true/' .env 2>/dev/null || true
-sed -i 's/USE_NEWAVATA_API=false/USE_NEWAVATA_API=true/' .env 2>/dev/null || true
-sed -i 's/TTS_USE_FLASH_ATTENTION=false/TTS_USE_FLASH_ATTENTION=true/' .env 2>/dev/null || true
+# Force set video API mode (more robust method)
+# Remove existing entries and add new ones
+grep -v "^ENABLE_VIDEO=" .env > .env.tmp 2>/dev/null || cp .env .env.tmp
+grep -v "^USE_NEWAVATA_API=" .env.tmp > .env.tmp2 2>/dev/null || cp .env.tmp .env.tmp2
+grep -v "^NEWAVATA_API_URL=" .env.tmp2 > .env.tmp3 2>/dev/null || cp .env.tmp2 .env.tmp3
+grep -v "^TTS_USE_FLASH_ATTENTION=" .env.tmp3 > .env.tmp4 2>/dev/null || cp .env.tmp3 .env.tmp4
+grep -v "^MODEL_0_6B_BASE=$" .env.tmp4 > .env.tmp5 2>/dev/null || cp .env.tmp4 .env.tmp5
+grep -v "^MODEL_1_7B_BASE=$" .env.tmp5 > .env 2>/dev/null || cp .env.tmp5 .env
+rm -f .env.tmp .env.tmp2 .env.tmp3 .env.tmp4 .env.tmp5
 
-# Comment out empty model paths
-sed -i 's/^MODEL_0_6B_BASE=$/# MODEL_0_6B_BASE=/' .env 2>/dev/null || true
-sed -i 's/^MODEL_1_7B_BASE=$/# MODEL_1_7B_BASE=/' .env 2>/dev/null || true
+# Add required settings
+echo "" >> .env
+echo "# Auto-configured by start_full.sh" >> .env
+echo "ENABLE_VIDEO=true" >> .env
+echo "USE_NEWAVATA_API=true" >> .env
+echo "NEWAVATA_API_URL=http://localhost:8001" >> .env
+echo "TTS_USE_FLASH_ATTENTION=true" >> .env
 
 echo -e "  ${GREEN}TTS configured for API mode${NC}"
 echo -e "    ENABLE_VIDEO=true"
 echo -e "    USE_NEWAVATA_API=true"
+echo -e "    NEWAVATA_API_URL=http://localhost:8001"
 
 # Step 2: Setup NewAvata
 echo -e "\n${YELLOW}[5/7] Setting up NewAvata...${NC}"
@@ -196,40 +218,55 @@ except Exception as e:
         echo -e "  Downloading FaceParse model..."
         mkdir -p "$MODELS_DIR/face-parse-bisent"
 
-        # Try multiple sources
-        FACEPARSE_URLS=(
-            "https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth"
-            "https://huggingface.co/lllyasviel/fooocus_inpaint/resolve/main/fooocus_inpaint_head.pth"
-        )
-
-        # Method 1: Direct download with wget
-        if wget -q --show-progress -O "$FACEPARSE_MODEL" "https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth" 2>/dev/null; then
-            echo -e "  ${GREEN}FaceParse model downloaded${NC}"
-        else
-            # Method 2: Try with Python
-            python -c "
-import urllib.request
+        # Download using Python with multiple fallback URLs
+        python -c "
 import os
-
-urls = [
-    'https://github.com/zllrunning/face-parsing.PyTorch/releases/download/v1.0/79999_iter.pth',
-]
+import urllib.request
+from huggingface_hub import hf_hub_download
 
 output = '$FACEPARSE_MODEL'
 os.makedirs(os.path.dirname(output), exist_ok=True)
 
-for url in urls:
+# Method 1: Try HuggingFace alternatives
+hf_sources = [
+    ('gwang-kim/datid3d-finetuned-eg3d-car', 'face_parsing/79999_iter.pth'),
+    ('h94/IP-Adapter-FaceID', 'models/parsing_model/79999_iter.pth'),
+]
+
+downloaded = False
+for repo_id, filename in hf_sources:
     try:
-        print(f'  Trying: {url}')
-        urllib.request.urlretrieve(url, output)
-        if os.path.getsize(output) > 1000000:  # > 1MB
-            print(f'  Success!')
+        print(f'  Trying HuggingFace: {repo_id}')
+        path = hf_hub_download(repo_id=repo_id, filename=filename)
+        import shutil
+        shutil.copy(path, output)
+        if os.path.getsize(output) > 1000000:
+            print(f'  Success from {repo_id}!')
+            downloaded = True
             break
     except Exception as e:
         print(f'  Failed: {e}')
         continue
-" 2>/dev/null && echo -e "  ${GREEN}FaceParse model downloaded${NC}" || echo -e "  ${YELLOW}FaceParse model download failed - may need manual download${NC}"
-        fi
+
+# Method 2: Try direct URLs
+if not downloaded:
+    urls = [
+        'https://drive.usercontent.google.com/download?id=154JgKpzCPW82qINcVieuPH3fZ2e0P812&confirm=t',
+    ]
+    for url in urls:
+        try:
+            print(f'  Trying direct URL...')
+            urllib.request.urlretrieve(url, output)
+            if os.path.getsize(output) > 1000000:
+                print(f'  Success!')
+                downloaded = True
+                break
+        except Exception as e:
+            print(f'  Failed: {e}')
+
+if not downloaded:
+    print('  Warning: Could not download FaceParse model')
+" 2>/dev/null && echo -e "  ${GREEN}FaceParse model downloaded${NC}" || echo -e "  ${YELLOW}FaceParse model download skipped${NC}"
     else
         echo -e "  ${GREEN}FaceParse model already exists${NC}"
     fi
