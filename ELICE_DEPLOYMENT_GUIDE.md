@@ -1,6 +1,6 @@
 # 엘리스 클라우드 배포 가이드 (VSCode CUDA 12.4)
 
-## ✅ 배포 환경 확정
+## ✅ 배포 환경
 - **실행 환경**: VSCode (CUDA 12.4)
 - **GPU**: A100 40GB/80GB
 - **OS**: Linux (Ubuntu)
@@ -8,9 +8,47 @@
 
 ---
 
-## 📦 1단계: 프로젝트 업로드
+## 🚀 빠른 시작 (새 인스턴스)
 
-### 방법 1: Git Clone (권장)
+**3단계로 서버 시작:**
+
+```bash
+# 1. 프로젝트 클론
+cd ~
+git clone https://github.com/mindvridge/Qwen3-TTS.git
+cd Qwen3-TTS
+
+# 2. 서버 시작 (모든 설정 자동)
+bash start.sh
+```
+
+**첫 실행 시 자동으로:**
+- ✅ 의존성 설치
+- ✅ Flash Attention 설치 (GitHub Releases에서 wheel 다운로드, 수 초)
+- ✅ `.env` 파일 생성 (Flash Attention 활성화)
+- ✅ 모델 다운로드 (Hugging Face에서 자동)
+- ✅ 서버 시작
+
+**⚠️ 주의**: 첫 실행 후 서버가 모델 로딩 오류 발생 시:
+```bash
+# .env에서 빈 모델 경로 주석 처리
+sed -i 's/^MODEL_0_6B_BASE=$/# MODEL_0_6B_BASE=/' .env
+sed -i 's/^MODEL_1_7B_BASE=$/# MODEL_1_7B_BASE=/' .env
+
+# Flash Attention 활성화
+sed -i 's/TTS_USE_FLASH_ATTENTION=false/TTS_USE_FLASH_ATTENTION=true/' .env
+
+# 서버 재시작
+bash start.sh
+```
+
+---
+
+## 📦 상세 설치 가이드
+
+### 1단계: 프로젝트 업로드
+
+#### 방법 1: Git Clone (권장)
 ```bash
 # 엘리스 클라우드 터미널에서 실행
 cd ~
@@ -18,7 +56,7 @@ git clone https://github.com/mindvridge/Qwen3-TTS.git
 cd Qwen3-TTS
 ```
 
-### 방법 2: 파일 직접 업로드
+#### 방법 2: 파일 직접 업로드
 엘리스 클라우드 파일 탐색기에서 프로젝트 폴더 업로드
 
 ---
