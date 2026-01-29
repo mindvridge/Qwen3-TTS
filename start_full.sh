@@ -1217,22 +1217,41 @@ NEWAVATA_SCRIPT
         echo -e "  ${RED}NewAvata app directory not found: $NEWAVATA_APP_DIR${NC}"
     fi
 
-    # Wait for NewAvata to initialize and verify
-    echo -e "  Waiting for NewAvata to initialize (30s)..."
-    sleep 30
+    # Wait for NewAvata to initialize and verify with real-time monitoring
+    echo -e "  ${CYAN}Waiting for NewAvata to initialize (monitoring progress)...${NC}"
+    echo ""
 
-    # Check if tmux session is still alive
+    # Monitor startup in real-time with timeout
+    MAX_WAIT=120  # 2 minutes maximum
+    WAITED=0
     NEWAVATA_OK=false
-    if tmux has-session -t newavata 2>/dev/null; then
-        echo -e "  ${GREEN}NewAvata tmux session is running${NC}"
+    PORT_LISTENING=false
+
+    while [ $WAITED -lt $MAX_WAIT ]; do
+        # Show progress every 10 seconds
+        if [ $((WAITED % 10)) -eq 0 ]; then
+            echo -e "  [${WAITED}s] Checking NewAvata status..."
+
+            # Show latest log lines
+            if [ -f "/tmp/newavata_startup.log" ]; then
+                LAST_LOG=$(tail -3 /tmp/newavata_startup.log 2>/dev/null | head -3)
+                if [ -n "$LAST_LOG" ]; then
+                    echo -e "  ${CYAN}Latest log:${NC}"
+                    echo "$LAST_LOG" | sed 's/^/    /'
+                fi
+            fi
+
+            # Check for errors in log
+            if [ -f "/tmp/newavata_startup.log" ]; then
+                if grep -qiE "error|exception|traceback|failed" /tmp/newavata_startup.log 2>/dev/null; then
+                    echo -e "  ${RED}[ERROR DETECTED in log]${NC}"
+                    grep -iE "error|exception|traceback" /tmp/newavata_startup.log | tail -5 | sed 's/^/    /'
+                fi
+            fi
+        fi
 
         # Check if port 8001 is listening
-        PORT_LISTENING=false
-        if command -v lsof &> /dev/null; then
-            if lsof -i :8001 &>/dev/null; then
-                PORT_LISTENING=true
-            fi
-        elif command -v ss &> /dev/null; then
+        if command -v ss &> /dev/null; then
             if ss -tln | grep -q ":8001"; then
                 PORT_LISTENING=true
             fi
@@ -1240,26 +1259,44 @@ NEWAVATA_SCRIPT
             if netstat -tln | grep -q ":8001"; then
                 PORT_LISTENING=true
             fi
+        elif command -v lsof &> /dev/null; then
+            if lsof -i :8001 &>/dev/null; then
+                PORT_LISTENING=true
+            fi
         fi
 
         if [ "$PORT_LISTENING" = true ]; then
-            echo -e "  ${GREEN}Port 8001 is listening${NC}"
+            echo -e "  ${GREEN}[${WAITED}s] Port 8001 is now listening!${NC}"
 
             # Test health endpoint
-            echo -e "  Testing NewAvata health endpoint..."
-            HEALTH_RESPONSE=$(curl -s --max-time 10 http://localhost:8001/health 2>/dev/null || echo "FAILED")
+            HEALTH_RESPONSE=$(curl -s --max-time 5 http://localhost:8001/health 2>/dev/null || echo "")
 
             if echo "$HEALTH_RESPONSE" | grep -qiE "ok|healthy|running|status"; then
                 echo -e "  ${GREEN}NewAvata health check: OK${NC}"
                 echo -e "  Response: $HEALTH_RESPONSE"
                 NEWAVATA_OK=true
+                break
             else
-                echo -e "  ${RED}NewAvata health check: FAILED${NC}"
-                echo -e "  Response: $HEALTH_RESPONSE"
+                # Port is listening but health check fails - wait more
+                echo -e "  ${YELLOW}Port listening but health check pending...${NC}"
             fi
-        else
-            echo -e "  ${YELLOW}Port 8001 not listening yet${NC}"
         fi
+
+        # Check if tmux session died
+        if ! tmux has-session -t newavata 2>/dev/null; then
+            echo -e "  ${RED}[${WAITED}s] NewAvata tmux session died!${NC}"
+            break
+        fi
+
+        sleep 5
+        WAITED=$((WAITED + 5))
+    done
+
+    echo ""
+
+    # Final status check
+    if tmux has-session -t newavata 2>/dev/null; then
+        echo -e "  ${GREEN}NewAvata tmux session is running${NC}"
     else
         echo -e "  ${RED}NewAvata tmux session died!${NC}"
     fi
@@ -1267,89 +1304,264 @@ NEWAVATA_SCRIPT
     # If NewAvata failed, show detailed error logs
     if [ "$NEWAVATA_OK" = false ]; then
         echo ""
-        echo -e "  ${RED}========== NewAvata ERROR DETAILS ==========${NC}"
+        echo -e "  ${RED}╔══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${RED}║           NewAvata ERROR DETAILS                         ║${NC}"
+        echo -e "  ${RED}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
 
-        # Show startup log
-        echo -e "  ${YELLOW}[1] Startup Log (/tmp/newavata_startup.log):${NC}"
+        # [1] Full Startup Log
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[1/6] FULL STARTUP LOG (/tmp/newavata_startup.log):${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         if [ -f "/tmp/newavata_startup.log" ]; then
-            cat /tmp/newavata_startup.log | tail -50
+            echo ""
+            cat /tmp/newavata_startup.log | tail -100
+            echo ""
         else
-            echo "    (not found)"
+            echo "    (log file not found)"
         fi
-        echo ""
 
-        # Show tmux output
-        echo -e "  ${YELLOW}[2] Tmux Session Output:${NC}"
+        # [2] Tmux Session Output
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[2/6] TMUX SESSION OUTPUT:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         if tmux has-session -t newavata 2>/dev/null; then
-            tmux capture-pane -t newavata -p | tail -50
+            echo ""
+            tmux capture-pane -t newavata -p 2>/dev/null | tail -80
+            echo ""
         else
-            echo "    (session not running)"
+            echo "    (tmux session not running)"
         fi
-        echo ""
 
-        # Check for common errors
-        echo -e "  ${YELLOW}[3] Error Analysis:${NC}"
+        # [3] Error Pattern Analysis
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[3/6] ERROR PATTERN ANALYSIS:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        ERROR_FOUND=false
+
         if [ -f "/tmp/newavata_startup.log" ]; then
+            # Check each error type with detailed info
             if grep -q "IndentationError" /tmp/newavata_startup.log; then
-                echo -e "    ${RED}IndentationError detected - Python syntax error${NC}"
-                grep -A2 "IndentationError" /tmp/newavata_startup.log
+                echo -e "    ${RED}✗ IndentationError detected - Python syntax error${NC}"
+                grep -B3 -A5 "IndentationError" /tmp/newavata_startup.log | head -15
+                echo ""
+                ERROR_FOUND=true
             fi
+
+            if grep -q "SyntaxError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}✗ SyntaxError detected - Python syntax error${NC}"
+                grep -B3 -A5 "SyntaxError" /tmp/newavata_startup.log | head -15
+                echo ""
+                ERROR_FOUND=true
+            fi
+
             if grep -q "ModuleNotFoundError" /tmp/newavata_startup.log; then
-                echo -e "    ${RED}ModuleNotFoundError detected - Missing module${NC}"
-                grep "ModuleNotFoundError" /tmp/newavata_startup.log
+                echo -e "    ${RED}✗ ModuleNotFoundError detected - Missing module${NC}"
+                grep -B2 -A2 "ModuleNotFoundError" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
             fi
+
+            if grep -q "ImportError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}✗ ImportError detected - Import failure${NC}"
+                grep -B2 -A2 "ImportError" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
+            fi
+
             if grep -q "TypeError" /tmp/newavata_startup.log; then
-                echo -e "    ${RED}TypeError detected${NC}"
-                grep -B2 -A2 "TypeError" /tmp/newavata_startup.log | head -10
+                echo -e "    ${RED}✗ TypeError detected${NC}"
+                grep -B5 -A5 "TypeError" /tmp/newavata_startup.log | head -15
+                echo ""
+                ERROR_FOUND=true
             fi
+
             if grep -q "FileNotFoundError" /tmp/newavata_startup.log; then
-                echo -e "    ${RED}FileNotFoundError detected - Missing file${NC}"
-                grep "FileNotFoundError" /tmp/newavata_startup.log
+                echo -e "    ${RED}✗ FileNotFoundError detected - Missing file${NC}"
+                grep -B2 -A2 "FileNotFoundError" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
             fi
+
             if grep -q "EOFError" /tmp/newavata_startup.log; then
-                echo -e "    ${RED}EOFError detected - Corrupted model file${NC}"
-                grep -B2 "EOFError" /tmp/newavata_startup.log
+                echo -e "    ${RED}✗ EOFError detected - Corrupted model file${NC}"
+                grep -B5 -A2 "EOFError" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
+            fi
+
+            if grep -q "RuntimeError" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}✗ RuntimeError detected${NC}"
+                grep -B3 -A5 "RuntimeError" /tmp/newavata_startup.log | head -15
+                echo ""
+                ERROR_FOUND=true
+            fi
+
+            if grep -q "CUDA" /tmp/newavata_startup.log | grep -qi "error\|fail"; then
+                echo -e "    ${RED}✗ CUDA Error detected${NC}"
+                grep -i "CUDA" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
+            fi
+
+            if grep -q "OutOfMemoryError\|OOM\|out of memory" /tmp/newavata_startup.log; then
+                echo -e "    ${RED}✗ Out of Memory Error detected${NC}"
+                grep -i "memory\|OOM" /tmp/newavata_startup.log | head -10
+                echo ""
+                ERROR_FOUND=true
+            fi
+
+            # Check if server is stuck at specific point
+            if grep -q "Lipsync Server 시작" /tmp/newavata_startup.log; then
+                LAST_LINE=$(tail -1 /tmp/newavata_startup.log)
+                if [[ "$LAST_LINE" == *"시작"* ]] || [[ "$LAST_LINE" == *"loading"* ]] || [[ "$LAST_LINE" == *"Loading"* ]]; then
+                    echo -e "    ${YELLOW}⚠ Server appears STUCK during initialization${NC}"
+                    echo -e "      Last activity: $LAST_LINE"
+                    echo ""
+                    ERROR_FOUND=true
+                fi
             fi
         fi
 
-        # Check patched app.py for syntax errors
+        if [ "$ERROR_FOUND" = false ]; then
+            echo -e "    ${YELLOW}No specific error patterns detected in log${NC}"
+            echo -e "    ${CYAN}Possible causes:${NC}"
+            echo -e "      - Server is still loading models (may take >2 min)"
+            echo -e "      - Server is hung during model initialization"
+            echo -e "      - GPU memory allocation is stuck"
+        fi
+
+        # [4] Check patched app.py for syntax errors
         echo ""
-        echo -e "  ${YELLOW}[4] Checking patched app.py syntax:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[4/6] APP.PY SYNTAX CHECK:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
         if [ -f "$NEWAVATA_APP_DIR/app.py" ]; then
             cd "$NEWAVATA_APP_DIR"
             if [ -f "venv/bin/activate" ]; then
-                source venv/bin/activate
+                source venv/bin/activate 2>/dev/null
             fi
+
             SYNTAX_CHECK=$(python -m py_compile app.py 2>&1)
             if [ -z "$SYNTAX_CHECK" ]; then
-                echo -e "    ${GREEN}app.py syntax OK${NC}"
+                echo -e "    ${GREEN}✓ app.py syntax: OK${NC}"
             else
-                echo -e "    ${RED}app.py syntax ERROR:${NC}"
+                echo -e "    ${RED}✗ app.py syntax ERROR:${NC}"
+                echo ""
                 echo "$SYNTAX_CHECK"
+                echo ""
 
                 # Show the problematic lines
-                echo ""
                 echo -e "    ${YELLOW}Problematic code section:${NC}"
                 # Extract line number from error
-                LINE_NUM=$(echo "$SYNTAX_CHECK" | grep -oP 'line \K[0-9]+' | head -1)
+                LINE_NUM=$(echo "$SYNTAX_CHECK" | grep -oE 'line [0-9]+' | grep -oE '[0-9]+' | head -1)
                 if [ -n "$LINE_NUM" ]; then
                     START=$((LINE_NUM - 5))
                     [ $START -lt 1 ] && START=1
                     END=$((LINE_NUM + 5))
-                    sed -n "${START},${END}p" app.py | head -15
+                    echo "    Lines $START-$END of app.py:"
+                    awk "NR>=$START && NR<=$END {printf \"    %4d: %s\\n\", NR, \$0}" app.py
                 fi
             fi
             cd "$SCRIPT_DIR"
+        else
+            echo -e "    ${RED}app.py not found at: $NEWAVATA_APP_DIR/app.py${NC}"
+        fi
+
+        # [5] Model Files Check
+        echo ""
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[5/6] MODEL FILES STATUS:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        MODEL_DIR="$NEWAVATA_APP_DIR/models"
+        if [ -d "$MODEL_DIR" ]; then
+            # Check critical model files
+            echo -e "    ${CYAN}Critical Model Files:${NC}"
+
+            # musetalkV15/unet.pth
+            if [ -f "$MODEL_DIR/musetalkV15/unet.pth" ]; then
+                SIZE=$(du -h "$MODEL_DIR/musetalkV15/unet.pth" 2>/dev/null | cut -f1)
+                echo -e "    ✓ musetalkV15/unet.pth: ${GREEN}OK${NC} ($SIZE)"
+            else
+                echo -e "    ✗ musetalkV15/unet.pth: ${RED}MISSING${NC}"
+            fi
+
+            # musetalk/pytorch_model.bin
+            if [ -f "$MODEL_DIR/musetalk/pytorch_model.bin" ]; then
+                SIZE=$(du -h "$MODEL_DIR/musetalk/pytorch_model.bin" 2>/dev/null | cut -f1)
+                echo -e "    ✓ musetalk/pytorch_model.bin: ${GREEN}OK${NC} ($SIZE)"
+            else
+                echo -e "    ✗ musetalk/pytorch_model.bin: ${RED}MISSING${NC}"
+            fi
+
+            # face-parse-bisent/79999_iter.pth
+            if [ -f "$MODEL_DIR/face-parse-bisent/79999_iter.pth" ]; then
+                SIZE=$(du -h "$MODEL_DIR/face-parse-bisent/79999_iter.pth" 2>/dev/null | cut -f1)
+                echo -e "    ✓ face-parse-bisent/79999_iter.pth: ${GREEN}OK${NC} ($SIZE)"
+            else
+                echo -e "    ✗ face-parse-bisent/79999_iter.pth: ${RED}MISSING${NC}"
+            fi
+
+            # sd-vae
+            if [ -f "$MODEL_DIR/sd-vae/diffusion_pytorch_model.bin" ]; then
+                SIZE=$(du -h "$MODEL_DIR/sd-vae/diffusion_pytorch_model.bin" 2>/dev/null | cut -f1)
+                echo -e "    ✓ sd-vae/diffusion_pytorch_model.bin: ${GREEN}OK${NC} ($SIZE)"
+            else
+                echo -e "    ✗ sd-vae/diffusion_pytorch_model.bin: ${RED}MISSING${NC}"
+            fi
+        else
+            echo -e "    ${RED}Model directory not found: $MODEL_DIR${NC}"
+        fi
+
+        # [6] GPU Status
+        echo ""
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${YELLOW}[6/6] GPU STATUS:${NC}"
+        echo -e "  ${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+
+        if command -v nvidia-smi &> /dev/null; then
+            nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv 2>/dev/null | head -5 | sed 's/^/    /'
+            echo ""
+
+            # Check if GPU memory is nearly full
+            MEM_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
+            MEM_TOTAL=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')
+
+            if [[ "$MEM_USED" =~ ^[0-9]+$ ]] && [[ "$MEM_TOTAL" =~ ^[0-9]+$ ]]; then
+                MEM_PERCENT=$((MEM_USED * 100 / MEM_TOTAL))
+                if [ "$MEM_PERCENT" -gt 90 ]; then
+                    echo -e "    ${RED}⚠ GPU memory usage is at ${MEM_PERCENT}% - possible OOM issue${NC}"
+                elif [ "$MEM_PERCENT" -gt 70 ]; then
+                    echo -e "    ${YELLOW}⚠ GPU memory usage is at ${MEM_PERCENT}%${NC}"
+                else
+                    echo -e "    ${GREEN}✓ GPU memory usage: ${MEM_PERCENT}%${NC}"
+                fi
+            fi
+        else
+            echo -e "    ${YELLOW}nvidia-smi not available${NC}"
         fi
 
         echo ""
-        echo -e "  ${RED}========== END ERROR DETAILS ==========${NC}"
+        echo -e "  ${RED}╔══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${RED}║           END ERROR DETAILS                              ║${NC}"
+        echo -e "  ${RED}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo -e "  ${YELLOW}To debug manually:${NC}"
-        echo -e "    tmux attach -t newavata"
-        echo -e "    # or"
-        echo -e "    cd $NEWAVATA_APP_DIR && source venv/bin/activate && python app.py"
+        echo -e "  ${CYAN}Debug Commands:${NC}"
+        echo -e "    ${YELLOW}tmux attach -t newavata${NC}  # View live server output"
+        echo -e "    ${YELLOW}tail -f /tmp/newavata_startup.log${NC}  # View startup log"
+        echo -e "    ${YELLOW}cd $NEWAVATA_APP_DIR && source venv/bin/activate && python app.py${NC}"
+        echo ""
+
+        # Option to restore original app.py and retry
+        echo -e "  ${CYAN}If app.py is corrupted, restore and retry:${NC}"
+        echo -e "    ${YELLOW}cd $NEWAVATA_APP_DIR && git checkout app.py${NC}"
+        echo -e "    ${YELLOW}bash ~/Qwen3-TTS/start_full.sh${NC}"
         echo ""
     fi
 
