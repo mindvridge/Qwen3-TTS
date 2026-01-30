@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+NewAvata Lip-sync REST API Test
+Uses /api/v2/lipsync endpoint instead of Socket.IO
+"""
+
+import requests
+import time
+import json
+import sys
+
+# Server URLs
+TTS_URL = "https://rhbwsfctehtfacax.tunnel.elice.io"
+NEWAVATA_URL = "https://nzgwjxtxppjpasfr.tunnel.elice.io"
+
+
+def check_server_status():
+    """Check both servers and avatar status"""
+    print("=== Server Status Check ===\n")
+
+    # TTS Server
+    try:
+        r = requests.get(f"{TTS_URL}/health", timeout=5)
+        if r.status_code == 200:
+            print(f"[TTS] OK - Running at {TTS_URL}")
+        else:
+            print(f"[TTS] ERROR: {r.status_code}")
+            return False, []
+    except Exception as e:
+        print(f"[TTS] ERROR - Not reachable: {e}")
+        return False, []
+
+    # NewAvata Server
+    try:
+        r = requests.get(f"{NEWAVATA_URL}/api/availability", timeout=5)
+        if r.status_code == 200:
+            print(f"[NewAvata] OK - Running at {NEWAVATA_URL}")
+        else:
+            print(f"[NewAvata] ERROR: {r.status_code}")
+            return False, []
+    except Exception as e:
+        print(f"[NewAvata] ERROR - Not reachable: {e}")
+        return False, []
+
+    # Check avatars
+    avatars = []
+    try:
+        r = requests.get(f"{NEWAVATA_URL}/api/avatars", timeout=5)
+        avatars = r.json()
+        if avatars:
+            print(f"[Avatars] OK - Found {len(avatars)} avatar(s)")
+            for a in avatars[:5]:  # Show first 5
+                print(f"    - {a.get('name', a)}")
+            if len(avatars) > 5:
+                print(f"    ... and {len(avatars) - 5} more")
+            return True, avatars
+        else:
+            print(f"[Avatars] MISSING - No precomputed avatars found!")
+            return False, []
+    except Exception as e:
+        print(f"[Avatars] Error: {e}")
+        return False, []
+
+
+def test_lipsync_rest(text, avatar="auto"):
+    """Test lip-sync using REST API"""
+    print(f"\n=== Lip-sync REST API Test ===")
+    print(f"Text: {text}")
+    print(f"Avatar: {avatar}")
+    print(f"Endpoint: {NEWAVATA_URL}/api/v2/lipsync")
+    print("")
+
+    try:
+        print("[Request] Sending lip-sync request...")
+        start_time = time.time()
+
+        r = requests.post(
+            f"{NEWAVATA_URL}/api/v2/lipsync",
+            json={
+                "text": text,
+                "avatar": avatar,
+                "tts_engine": "edge",  # Use edge TTS (built-in)
+                "resolution": "480p"   # Lower resolution for faster processing
+            },
+            timeout=300  # 5 minutes timeout
+        )
+
+        elapsed = time.time() - start_time
+
+        if r.status_code == 200:
+            result = r.json()
+            if result.get('success'):
+                print(f"\n=== SUCCESS ({elapsed:.1f}s) ===")
+                print(f"Video URL: {NEWAVATA_URL}{result.get('video_url', '')}")
+                print(f"Video Path: {result.get('video_path', '')}")
+                print(f"Server Elapsed: {result.get('elapsed', 'N/A')}s")
+                return result
+            else:
+                print(f"\n=== FAILED ({elapsed:.1f}s) ===")
+                print(f"Error: {result.get('error', 'Unknown error')}")
+                return None
+        else:
+            print(f"\n=== HTTP ERROR ({elapsed:.1f}s) ===")
+            print(f"Status: {r.status_code}")
+            print(f"Response: {r.text[:500]}")
+            return None
+
+    except requests.exceptions.Timeout:
+        print(f"\n=== TIMEOUT ===")
+        print("Request timed out after 5 minutes")
+        return None
+    except Exception as e:
+        print(f"\n=== ERROR ===")
+        print(f"Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def test_lipsync_with_external_audio(text, avatar="auto"):
+    """Test lip-sync with external TTS audio (Qwen3-TTS)"""
+    print(f"\n=== Lip-sync with Qwen3-TTS Test ===")
+    print(f"Text: {text}")
+    print(f"Avatar: {avatar}")
+    print("")
+
+    # Step 1: Generate TTS audio
+    print("[1/2] Generating TTS audio with Qwen3-TTS...")
+    try:
+        r = requests.post(
+            f"{TTS_URL}/tts/voice_clone",
+            json={
+                "text": text,
+                "ref_audio": "https://github.com/mindvridge/Qwen3-TTS/raw/main/sample(1).mp3",
+                "ref_text": "sample reference text"
+            },
+            timeout=120
+        )
+
+        if r.status_code != 200:
+            print(f"[TTS] ERROR: {r.status_code} - {r.text[:200]}")
+            return None
+
+        audio_data = r.content
+        print(f"[TTS] OK - Generated {len(audio_data)} bytes")
+
+    except Exception as e:
+        print(f"[TTS] ERROR: {e}")
+        return None
+
+    # Step 2: Send audio to NewAvata for lip-sync
+    # Note: /api/v2/lipsync doesn't support external audio directly
+    # We would need to use a different endpoint or upload the audio first
+    print("[2/2] NewAvata doesn't support external audio in REST API directly")
+    print("      Use the built-in TTS engines instead (edge, elevenlabs, etc.)")
+
+    return None
+
+
+def main():
+    text = sys.argv[1] if len(sys.argv) > 1 else "안녕하세요, 립싱크 테스트입니다."
+
+    # Check servers
+    ok, avatars = check_server_status()
+
+    if not ok:
+        print("\n" + "="*50)
+        print("Cannot proceed: Server or avatars not available")
+        print("="*50)
+        return
+
+    # Use first avatar or 'auto'
+    avatar = avatars[0].get('name', 'auto') if avatars else 'auto'
+
+    # Test REST API
+    result = test_lipsync_rest(text, avatar)
+
+    if result:
+        print("\n" + "="*50)
+        print("Test completed successfully!")
+        print("="*50)
+
+
+if __name__ == "__main__":
+    main()

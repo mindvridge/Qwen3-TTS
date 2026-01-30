@@ -1295,6 +1295,12 @@ else
     echo "WARNING: MuseTalk not found at $MUSETALK_PATH" >> /tmp/newavata_startup.log
 fi
 
+# Configure Qwen3-TTS connection (TTS server running on port 8000)
+export QWEN3_TTS_API_URL="http://localhost:8000"
+export QWEN3_TTS_REF_AUDIO="https://github.com/mindvridge/Qwen3-TTS/raw/main/sample(1).mp3"
+export QWEN3_TTS_REF_TEXT="안녕하세요, 반갑습니다."
+echo "Qwen3-TTS configured: $QWEN3_TTS_API_URL" >> /tmp/newavata_startup.log
+
 # Fix Whisper warmup bug in load_models - the bug is passing tuple to get_audio_feature
 echo "Fixing Whisper warmup bug..." >> /tmp/newavata_startup.log
 if [ -f "app.py" ]; then
