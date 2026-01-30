@@ -1744,6 +1744,12 @@ NEWAVATA_SCRIPT
     echo -e "    tmux kill-session -t newavata  # Stop NewAvata"
     echo ""
 
+    # Kill any existing process on port 8000 before starting TTS server
+    if command -v fuser &> /dev/null; then
+        fuser -k 8000/tcp 2>/dev/null || true
+        sleep 1
+    fi
+
     python server.py
 
 else
@@ -1819,6 +1825,12 @@ else
     echo -e "  ${YELLOW}To stop NewAvata:${NC} kill $NEWAVATA_PID"
     echo -e "  ${YELLOW}NewAvata logs:${NC} tail -f /tmp/newavata.log"
     echo ""
+
+    # Kill any existing process on port 8000 before starting TTS server
+    if command -v fuser &> /dev/null; then
+        fuser -k 8000/tcp 2>/dev/null || true
+        sleep 1
+    fi
 
     python server.py
 fi
