@@ -1062,48 +1062,113 @@ fi
 # Fix nested directory structure for precomputed avatars
 # NewAvata precompute creates: precomputed/name.pkl/name_precomputed.pkl (directory with file inside)
 # But API expects: precomputed/name.pkl (file)
-# Solution: Create symlinks from expected location to actual files
+# Solution: Move the inner file to the expected location
 echo -e "\n  ${CYAN}Checking precomputed avatar structure...${NC}"
 
 if [ -d "$PRECOMPUTED_DIR" ]; then
     FIXED_COUNT=0
-    for item in "$PRECOMPUTED_DIR"/*.pkl; do
+
+    # First, check for directories ending in .pkl
+    for item in "$PRECOMPUTED_DIR"/*; do
         if [ -d "$item" ]; then
-            # It's a directory, need to create symlink
             dir_name=$(basename "$item")
-            base_name="${dir_name%.pkl}"
 
-            # Find the actual .pkl file inside
-            inner_pkl=$(find "$item" -maxdepth 1 -name "*.pkl" -type f | head -1)
+            # Check if it's a .pkl directory (contains inner pkl file)
+            if [[ "$dir_name" == *.pkl ]]; then
+                # Find the actual .pkl file inside
+                inner_pkl=$(find "$item" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | head -1)
 
-            if [ -n "$inner_pkl" ] && [ -f "$inner_pkl" ]; then
-                # Rename directory and create symlink
-                backup_dir="${item}_dir"
-                if [ ! -d "$backup_dir" ]; then
+                if [ -n "$inner_pkl" ] && [ -f "$inner_pkl" ]; then
+                    # Move inner file out, rename directory to _backup
+                    backup_dir="${item}_backup"
+                    target_file="$item"
+
+                    echo -e "    Found: ${CYAN}$dir_name${NC} (directory)"
+                    echo -e "      Inner: $(basename $inner_pkl) ($(du -h "$inner_pkl" 2>/dev/null | cut -f1))"
+
+                    # Move directory to backup
                     mv "$item" "$backup_dir"
-                    ln -sf "$backup_dir/$(basename $inner_pkl)" "$item"
-                    echo -e "    Fixed: ${CYAN}$dir_name${NC} -> $(basename $inner_pkl)"
+                    # Move inner file to expected location
+                    mv "$backup_dir/$(basename $inner_pkl)" "$target_file"
+                    echo -e "      ${GREEN}Fixed: moved to $dir_name${NC}"
                     FIXED_COUNT=$((FIXED_COUNT + 1))
+                fi
+            elif [[ "$dir_name" == *.pkl_dir ]] || [[ "$dir_name" == *.pkl_backup ]]; then
+                # Already processed backup directory, check if file exists
+                base_name="${dir_name%_dir}"
+                base_name="${base_name%_backup}"
+                expected_file="$PRECOMPUTED_DIR/$base_name"
+
+                if [ ! -f "$expected_file" ]; then
+                    # File doesn't exist, try to restore from backup
+                    inner_pkl=$(find "$item" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | head -1)
+                    if [ -n "$inner_pkl" ] && [ -f "$inner_pkl" ]; then
+                        cp "$inner_pkl" "$expected_file"
+                        echo -e "    Restored: ${CYAN}$base_name${NC} from backup"
+                        FIXED_COUNT=$((FIXED_COUNT + 1))
+                    fi
+                fi
+            fi
+        fi
+    done
+
+    # Also check for symlinks that might be broken
+    for item in "$PRECOMPUTED_DIR"/*.pkl; do
+        if [ -L "$item" ]; then
+            # It's a symlink
+            if [ ! -e "$item" ]; then
+                # Broken symlink
+                link_target=$(readlink "$item" 2>/dev/null)
+                echo -e "    ${YELLOW}Warning: broken symlink $item -> $link_target${NC}"
+                # Try to find the actual file
+                dir_name=$(basename "$item")
+                backup_dir="${item}_backup"
+                if [ -d "$backup_dir" ]; then
+                    inner_pkl=$(find "$backup_dir" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | head -1)
+                    if [ -n "$inner_pkl" ] && [ -f "$inner_pkl" ]; then
+                        rm "$item"
+                        cp "$inner_pkl" "$item"
+                        echo -e "      ${GREEN}Fixed: copied from backup${NC}"
+                        FIXED_COUNT=$((FIXED_COUNT + 1))
+                    fi
                 fi
             fi
         fi
     done
 
     if [ "$FIXED_COUNT" -gt 0 ]; then
-        echo -e "  ${GREEN}Fixed $FIXED_COUNT avatar symlink(s)${NC}"
+        echo -e "  ${GREEN}Fixed $FIXED_COUNT avatar file(s)${NC}"
     else
         echo -e "  ${GREEN}Avatar structure OK${NC}"
     fi
+
+    # Show actual file count
+    FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | wc -l)
+    echo -e "  ${CYAN}Actual .pkl files: $FILE_COUNT${NC}"
 fi
 
 # Final avatar count and TensorRT note
-AVATAR_COUNT=$(ls -1 "$PRECOMPUTED_DIR/"*.pkl 2>/dev/null | wc -l)
-echo -e "\n  ${CYAN}Avatar Summary:${NC}"
-echo -e "    Precomputed: ${GREEN}$AVATAR_COUNT${NC} avatar(s)"
-echo -e "    TensorRT:    ${YELLOW}Auto-generated on first inference (~5GB)${NC}"
+# Use find to count only actual files (not directories or symlinks)
+AVATAR_FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | wc -l)
+AVATAR_SYMLINK_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type l 2>/dev/null | wc -l)
+AVATAR_DIR_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type d 2>/dev/null | wc -l)
 
-if [ "$AVATAR_COUNT" -eq 0 ]; then
+echo -e "\n  ${CYAN}Avatar Summary:${NC}"
+echo -e "    .pkl files:     ${GREEN}$AVATAR_FILE_COUNT${NC}"
+if [ "$AVATAR_SYMLINK_COUNT" -gt 0 ]; then
+    echo -e "    .pkl symlinks:  ${YELLOW}$AVATAR_SYMLINK_COUNT${NC} (may not work with API)"
+fi
+if [ "$AVATAR_DIR_COUNT" -gt 0 ]; then
+    echo -e "    .pkl dirs:      ${RED}$AVATAR_DIR_COUNT${NC} (need fixing)"
+fi
+echo -e "    TensorRT:       ${YELLOW}Auto-generated on first inference (~5GB)${NC}"
+
+if [ "$AVATAR_FILE_COUNT" -eq 0 ]; then
     echo -e "\n  ${YELLOW}Note: Add videos to assets/ and re-run, or use avatar_path='auto'${NC}"
+    if [ "$AVATAR_DIR_COUNT" -gt 0 ]; then
+        echo -e "  ${YELLOW}Found $AVATAR_DIR_COUNT .pkl directories that need manual fixing${NC}"
+        echo -e "  Run: find $PRECOMPUTED_DIR -maxdepth 1 -name '*.pkl' -type d"
+    fi
 fi
 
 # Start both servers
