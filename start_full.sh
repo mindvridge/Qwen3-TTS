@@ -2277,13 +2277,65 @@ except:
 
     echo -e "${CYAN}=== Verification Complete ===${NC}"
     echo ""
-    echo -e "  ${YELLOW}Test lip-sync (새 터미널에서):${NC}"
+
+    # === AUTOMATIC LIP-SYNC TEST ===
+    echo -e "${CYAN}=== Running Lip-sync Test ===${NC}"
+    echo ""
+
+    # Only run test if both servers are healthy and avatars exist
+    if [ "$TTS_HEALTH" = "OK" ] && [ "$NEWAVATA_HEALTH" = "OK" ] && [ "$AVATAR_COUNT" -gt 0 ]; then
+        echo -e "  ${YELLOW}[테스트] 립싱크 생성 중...${NC}"
+        echo -e "  Text: 안녕하세요, 립싱크 테스트입니다."
+        echo ""
+
+        # Run lip-sync test with timeout
+        LIPSYNC_RESULT=$(curl -s --max-time 300 -X POST http://localhost:8001/api/v2/lipsync \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"안녕하세요, 립싱크 테스트입니다.","tts_engine":"qwen3tts","avatar":"auto","resolution":"480p"}' 2>/dev/null)
+
+        if echo "$LIPSYNC_RESULT" | grep -qi "success.*true\|video_url"; then
+            VIDEO_URL=$(echo "$LIPSYNC_RESULT" | grep -oP '"video_url"\s*:\s*"\K[^"]+' | head -1)
+            echo -e "  ${GREEN}✓ 립싱크 테스트 성공!${NC}"
+            if [ -n "$VIDEO_URL" ]; then
+                echo -e "  ${GREEN}  Video URL: http://localhost:8001${VIDEO_URL}${NC}"
+            fi
+            echo ""
+        elif echo "$LIPSYNC_RESULT" | grep -qi "error\|fail"; then
+            ERROR_MSG=$(echo "$LIPSYNC_RESULT" | grep -oP '"error"\s*:\s*"\K[^"]+' | head -1)
+            echo -e "  ${RED}✗ 립싱크 테스트 실패${NC}"
+            if [ -n "$ERROR_MSG" ]; then
+                echo -e "  ${RED}  Error: $ERROR_MSG${NC}"
+            fi
+            echo ""
+            echo -e "  ${YELLOW}디버그: NewAvata 로그 확인${NC}"
+            echo -e "    tmux attach -t newavata"
+            echo ""
+        else
+            echo -e "  ${YELLOW}⚠ 립싱크 테스트 타임아웃 또는 응답 없음${NC}"
+            echo -e "  Response: ${LIPSYNC_RESULT:0:200}"
+            echo ""
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ 립싱크 테스트 건너뜀 (서버 또는 아바타 준비 안됨)${NC}"
+        if [ "$TTS_HEALTH" != "OK" ]; then
+            echo -e "    - TTS 서버 확인 필요"
+        fi
+        if [ "$NEWAVATA_HEALTH" != "OK" ]; then
+            echo -e "    - NewAvata 서버 확인 필요"
+        fi
+        if [ "$AVATAR_COUNT" -eq 0 ]; then
+            echo -e "    - 아바타 설정 필요: bash setup_avatar.sh"
+        fi
+        echo ""
+    fi
+
+    echo -e "  ${YELLOW}수동 테스트 (새 터미널에서):${NC}"
     echo -e "    curl -X POST http://localhost:8001/api/v2/lipsync \\"
     echo -e "      -H 'Content-Type: application/json' \\"
-    echo -e "      -d '{\"text\":\"안녕하세요, 립싱크 테스트입니다.\",\"tts_engine\":\"qwen3tts\",\"avatar\":\"idle_long\",\"resolution\":\"480p\"}'"
+    echo -e "      -d '{\"text\":\"안녕하세요\",\"tts_engine\":\"qwen3tts\",\"avatar\":\"auto\",\"resolution\":\"480p\"}'"
     echo ""
-    echo -e "  ${YELLOW}Or use test script:${NC}"
-    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요, 립싱크 테스트입니다.\""
+    echo -e "  ${YELLOW}테스트 스크립트 사용:${NC}"
+    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요, 테스트입니다.\""
     echo ""
 
     # Both servers are now running in tmux sessions
