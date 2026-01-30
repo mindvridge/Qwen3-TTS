@@ -1577,42 +1577,53 @@ def _ensure_audio_path(audio_input, output_dir="/tmp"):
         modified = True
         print('  Added _ensure_audio_path helper function')
 
-    # Now patch the lipsync function to use _ensure_audio_path
-    # Look for patterns where audio_path is used with os.stat or os.path
+    # CRITICAL FIX: Patch line 699 where get_audio_feature(audio_input) is called
+    # The error is: TypeError: stat: path should be string, bytes, os.PathLike or integer, not tuple
+    # This happens because qwen3tts returns tuple (audio_numpy, sample_rate) instead of file path
 
-    # Pattern: os.stat(audio_path) or os.path.exists(audio_path)
-    # Replace with type-safe version
+    # Pattern 1: Find the exact line calling get_audio_feature(audio_input)
+    pattern1 = r'(\s*)(whisper_input_features\s*,\s*librosa_length\s*=\s*self\.audio_processor\.get_audio_feature\(audio_input\))'
+    replacement1 = r'''\1# PATCHED_QWEN3TTS_TUPLE: Convert tuple to file path before get_audio_feature
+\1if isinstance(audio_input, tuple) and len(audio_input) == 2:
+\1    audio_input = _ensure_audio_path(audio_input)
+\1whisper_input_features, librosa_length = self.audio_processor.get_audio_feature(audio_input)'''
 
+    if re.search(pattern1, content):
+        content = re.sub(pattern1, replacement1, content)
+        modified = True
+        print('  Patched: get_audio_feature(audio_input) at line 699')
+
+    # Pattern 2: Also patch any other get_audio_feature calls with audio variables
+    pattern2 = r'(\s*)([\w_]+\s*,\s*[\w_]+\s*=\s*[\w\.]+\.get_audio_feature\((audio_input|wav_path|audio_path)\))'
+    def patch_audio_call(match):
+        indent = match.group(1)
+        line = match.group(2)
+        var = match.group(3)
+        if 'PATCHED_QWEN3TTS_TUPLE' in content[max(0, match.start()-200):match.start()]:
+            return match.group(0)  # Already patched nearby
+        return f'''{indent}# PATCHED_QWEN3TTS_TUPLE: Ensure file path
+{indent}if isinstance({var}, tuple) and len({var}) == 2:
+{indent}    {var} = _ensure_audio_path({var})
+{indent}{line}'''
+
+    new_content = re.sub(pattern2, patch_audio_call, content)
+    if new_content != content:
+        content = new_content
+        modified = True
+        print('  Patched additional get_audio_feature calls')
+
+    # Pattern 3: Also fix os.path.exists and os.stat on audio variables
     patterns_to_fix = [
-        # (pattern, replacement)
-        (r'os\.stat\(audio_path\)', '_ensure_audio_path(audio_path) and os.stat(_ensure_audio_path(audio_path))'),
-        (r'os\.path\.exists\(audio_path\)', 'isinstance(audio_path, str) and os.path.exists(audio_path)'),
-        (r'os\.path\.getsize\(audio_path\)', '_ensure_audio_path(audio_path) and os.path.getsize(_ensure_audio_path(audio_path))'),
+        (r'os\.path\.exists\(wav_path\)', 'isinstance(wav_path, str) and os.path.exists(wav_path)'),
+        (r'os\.path\.exists\(audio_input\)', 'isinstance(audio_input, str) and os.path.exists(audio_input)'),
+        (r'os\.stat\(wav_path\)', 'os.stat(wav_path if isinstance(wav_path, str) else "")'),
     ]
 
     for pattern, replacement in patterns_to_fix:
-        if re.search(pattern, content):
-            # Only replace if not already using _ensure_audio_path
-            if '_ensure_audio_path' not in content or pattern not in content:
-                content = re.sub(pattern, replacement, content)
-                modified = True
-                print(f'  Patched: {pattern}')
-
-    # Alternative: Patch the specific generate_tts_audio function for qwen3tts
-    # Look for qwen3tts handling and ensure it returns a file path
-    if 'qwen3tts' in content.lower() and 'QWEN3_TTS_API_URL' in content:
-        # Find where qwen3tts returns audio and ensure it's saved to file
-        qwen3_pattern = r"(elif\s+engine\s*==\s*['\"]qwen3tts['\"].*?)(return\s+.*?audio.*?\n)"
-
-        def add_file_save(match):
-            block = match.group(0)
-            if '_ensure_audio_path' not in block and 'PATCHED' not in block:
-                # Add comment marking the patch
-                return block.replace('return', '# PATCHED_QWEN3TTS_TUPLE: Ensure file path\n            return')
-            return block
-
-        # This is a simplified patch - the actual fix may need manual review
-        print('  Qwen3-TTS section found - helper function added')
+        if re.search(pattern, content) and replacement not in content:
+            content = re.sub(pattern, replacement, content)
+            modified = True
+            print(f'  Patched: {pattern}')
 
     if modified:
         with open('app.py', 'w', encoding='utf-8') as f:
@@ -1622,6 +1633,79 @@ def _ensure_audio_path(audio_input, output_dir="/tmp"):
         print('  No changes needed or patterns not found')
 QWEN3_PATCH
     echo "  Qwen3-TTS patch completed" >> /tmp/newavata_startup.log
+fi
+
+# BACKUP FIX: Also patch audio_processor.py in MuseTalk to handle tuple input
+echo "Patching MuseTalk audio_processor.py..." >> /tmp/newavata_startup.log
+AUDIO_PROCESSOR_PATH="$HOME/NewAvata/MuseTalk/musetalk/utils/audio_processor.py"
+if [ -f "$AUDIO_PROCESSOR_PATH" ]; then
+    python3 << 'AUDIO_PATCH'
+import os
+import re
+
+audio_path = os.path.expanduser('~/NewAvata/MuseTalk/musetalk/utils/audio_processor.py')
+if not os.path.exists(audio_path):
+    print(f'  audio_processor.py not found at {audio_path}')
+    exit(0)
+
+with open(audio_path, 'r', encoding='utf-8') as f:
+    content = f.read()
+
+if 'PATCHED_TUPLE_FIX' in content:
+    print('  audio_processor.py already patched')
+    exit(0)
+
+# Find the get_audio_feature function and add tuple handling at the start
+# Original: def get_audio_feature(self, wav_path):
+#           if not os.path.exists(wav_path):
+
+# Look for the function definition
+func_pattern = r'(def get_audio_feature\(self,\s*wav_path[^)]*\):)'
+if not re.search(func_pattern, content):
+    print('  get_audio_feature function not found')
+    exit(0)
+
+# Add tuple handling after the function definition
+tuple_fix = '''
+        # PATCHED_TUPLE_FIX: Handle tuple input (audio_data, sample_rate)
+        if isinstance(wav_path, tuple) and len(wav_path) == 2:
+            import uuid
+            import tempfile
+            import numpy as np
+            audio_data, sample_rate = wav_path
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, f"musetalk_audio_{uuid.uuid4().hex[:8]}.wav")
+            try:
+                import soundfile as sf
+                if isinstance(audio_data, bytes):
+                    with open(temp_path, 'wb') as f:
+                        f.write(audio_data)
+                elif isinstance(audio_data, np.ndarray):
+                    sf.write(temp_path, audio_data, sample_rate)
+                else:
+                    print(f"[WARN] Unknown audio type: {type(audio_data)}")
+                wav_path = temp_path
+            except Exception as e:
+                print(f"[ERROR] Failed to save tuple audio: {e}")
+'''
+
+# Insert the fix after the function definition
+def add_tuple_fix(match):
+    func_def = match.group(1)
+    return func_def + tuple_fix
+
+new_content = re.sub(func_pattern, add_tuple_fix, content, count=1)
+
+if new_content != content:
+    with open(audio_path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    print('  audio_processor.py patched successfully!')
+else:
+    print('  No changes made to audio_processor.py')
+AUDIO_PATCH
+    echo "  MuseTalk audio_processor patch completed" >> /tmp/newavata_startup.log
+else
+    echo "  audio_processor.py not found (MuseTalk not installed?)" >> /tmp/newavata_startup.log
 fi
 
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
