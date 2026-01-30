@@ -14,9 +14,19 @@ import sys
 import base64
 import io
 
-# Server URLs
-TTS_URL = "https://rhbwsfctehtfacax.tunnel.elice.io"
-NEWAVATA_URL = "https://nzgwjxtxppjpasfr.tunnel.elice.io"
+# Server URLs - Auto-detect local vs remote
+import os
+
+# Use environment variables if set, otherwise auto-detect
+# For local testing on Elice server, uses localhost
+if os.environ.get('LOCAL') == '1' or os.path.exists('/home/elicer'):
+    # Running on Elice server - use localhost
+    TTS_URL = os.environ.get('TTS_URL', 'http://localhost:8000')
+    NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'http://localhost:8001')
+else:
+    # Remote access via tunnel
+    TTS_URL = os.environ.get('TTS_URL', 'https://rhbwsfctehtfacax.tunnel.elice.io')
+    NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'https://nzgwjxtxppjpasfr.tunnel.elice.io')
 
 # Create Socket.IO client
 sio = socketio.Client()

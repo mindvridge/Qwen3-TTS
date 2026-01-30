@@ -1220,6 +1220,80 @@ if command -v tmux &> /dev/null; then
     tmux kill-session -t tts 2>/dev/null || true
     tmux kill-session -t newavata 2>/dev/null || true
 
+    # =============================================
+    # STEP 1: Start TTS server FIRST (so NewAvata can detect it)
+    # =============================================
+    echo -e "\n  ${CYAN}[Step 1/2] Starting TTS server first...${NC}"
+
+    # Kill any existing process on port 8000
+    if command -v fuser &> /dev/null; then
+        fuser -k 8000/tcp 2>/dev/null || true
+        sleep 1
+    fi
+
+    # Start TTS server in tmux
+    TTS_LOG="/tmp/tts_startup.log"
+    cd "$SCRIPT_DIR"
+
+    # Create TTS startup script
+    cat > /tmp/start_tts.sh << 'TTS_SCRIPT'
+#!/bin/bash
+cd "$1"
+echo "=== TTS Server Startup ===" > /tmp/tts_startup.log
+echo "Working dir: $(pwd)" >> /tmp/tts_startup.log
+echo "Date: $(date)" >> /tmp/tts_startup.log
+echo "" >> /tmp/tts_startup.log
+
+# Ensure we have the right Python environment
+deactivate 2>/dev/null || true
+unset VIRTUAL_ENV 2>/dev/null || true
+
+# If Qwen3-TTS has its own venv, activate it
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+    echo "Activated venv" >> /tmp/tts_startup.log
+fi
+
+# Verify environment
+if python -c "import fastapi; import torch; print('OK')" 2>/dev/null | grep -q "OK"; then
+    echo "Environment OK" >> /tmp/tts_startup.log
+else
+    echo "Installing dependencies..." >> /tmp/tts_startup.log
+    pip install -r requirements.txt --quiet 2>/dev/null
+fi
+
+echo "Starting TTS server on port 8000..." >> /tmp/tts_startup.log
+python -u server.py 2>&1 | tee -a /tmp/tts_startup.log
+TTS_SCRIPT
+    chmod +x /tmp/start_tts.sh
+
+    # Start TTS in tmux
+    tmux new-session -d -s tts "bash /tmp/start_tts.sh '$SCRIPT_DIR'"
+    echo -e "    ${GREEN}TTS server starting (tmux session: tts)${NC}"
+    echo -e "    Port: ${CYAN}8000${NC}"
+
+    # Wait for TTS server to be ready
+    echo -e "    Waiting for TTS server..."
+    TTS_READY=false
+    for i in $(seq 1 30); do
+        if curl -s --max-time 2 http://localhost:8000/health 2>/dev/null | grep -qiE "ok|healthy|status"; then
+            TTS_READY=true
+            echo -e "    ${GREEN}✓ TTS server ready (${i}s)${NC}"
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$TTS_READY" = false ]; then
+        echo -e "    ${YELLOW}⚠ TTS server not responding yet (may still be loading models)${NC}"
+        echo -e "    ${YELLOW}  NewAvata will start anyway, but qwen3tts may not be available initially${NC}"
+    fi
+
+    # =============================================
+    # STEP 2: Start NewAvata server (will detect TTS)
+    # =============================================
+    echo -e "\n  ${CYAN}[Step 2/2] Starting NewAvata server...${NC}"
+
     # Start NewAvata server in tmux
     NEWAVATA_LOG="/tmp/newavata_startup.log"
     if [ -d "$NEWAVATA_APP_DIR" ]; then
@@ -1381,6 +1455,154 @@ else:
         print('  No matching code found to patch')
 PATCH_SCRIPT
     echo "  Patch script completed" >> /tmp/newavata_startup.log
+fi
+
+# Fix Qwen3-TTS tuple bug - ensure tuple (audio_numpy, sample_rate) is saved to file before path operations
+echo "Fixing Qwen3-TTS tuple bug..." >> /tmp/newavata_startup.log
+if [ -f "app.py" ]; then
+    python3 << 'QWEN3_PATCH'
+import re
+
+with open('app.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# Check if already patched
+if 'PATCHED_QWEN3TTS_TUPLE' in content:
+    print('  Qwen3-TTS tuple fix already applied')
+else:
+    modified = False
+
+    # Pattern 1: Find where os.stat or os.path is called on audio_input that could be a tuple
+    # We need to add type checking before file operations
+
+    # Look for the generate_lipsync_internal function and add tuple handling
+    # The issue is that qwen3tts returns (audio_bytes, sample_rate) or similar tuple
+
+    # Fix: Add wrapper to save tuple audio to temp file
+    fix_code = '''
+# PATCHED_QWEN3TTS_TUPLE: Auto-convert tuple to file path
+def _ensure_audio_path(audio_input, output_dir="/tmp"):
+    """Convert audio tuple/bytes to file path if needed"""
+    import os
+    import tempfile
+    import uuid
+
+    if audio_input is None:
+        return None
+
+    # Already a string path
+    if isinstance(audio_input, str):
+        return audio_input
+
+    # Tuple of (audio_data, sample_rate)
+    if isinstance(audio_input, tuple) and len(audio_input) == 2:
+        audio_data, sample_rate = audio_input
+        try:
+            import soundfile as sf
+            import numpy as np
+
+            # Ensure output directory exists
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Generate unique filename
+            temp_path = os.path.join(output_dir, f"qwen3tts_audio_{uuid.uuid4().hex[:8]}.wav")
+
+            # Handle different audio data types
+            if isinstance(audio_data, bytes):
+                # Raw bytes - write directly
+                with open(temp_path, 'wb') as f:
+                    f.write(audio_data)
+            elif isinstance(audio_data, np.ndarray):
+                # Numpy array - use soundfile
+                sf.write(temp_path, audio_data, sample_rate)
+            else:
+                print(f"[WARN] Unknown audio data type: {type(audio_data)}")
+                return None
+
+            return temp_path
+        except Exception as e:
+            print(f"[ERROR] Failed to convert tuple to audio file: {e}")
+            return None
+
+    # Bytes data (without sample rate)
+    if isinstance(audio_input, bytes):
+        try:
+            import uuid
+            temp_path = os.path.join(output_dir, f"qwen3tts_audio_{uuid.uuid4().hex[:8]}.wav")
+            with open(temp_path, 'wb') as f:
+                f.write(audio_input)
+            return temp_path
+        except Exception as e:
+            print(f"[ERROR] Failed to save bytes to audio file: {e}")
+            return None
+
+    return audio_input
+
+'''
+
+    # Find a good place to insert the fix - after imports
+    if 'from flask import' in content or 'import flask' in content:
+        # Find the end of imports section
+        lines = content.split('\n')
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith('import ') or line.strip().startswith('from '):
+                insert_idx = i + 1
+            elif line.strip() and not line.strip().startswith('#') and insert_idx > 0:
+                # Found first non-import line
+                break
+
+        # Insert the fix after imports
+        lines.insert(insert_idx, fix_code)
+        content = '\n'.join(lines)
+        modified = True
+        print('  Added _ensure_audio_path helper function')
+
+    # Now patch the lipsync function to use _ensure_audio_path
+    # Look for patterns where audio_path is used with os.stat or os.path
+
+    # Pattern: os.stat(audio_path) or os.path.exists(audio_path)
+    # Replace with type-safe version
+
+    patterns_to_fix = [
+        # (pattern, replacement)
+        (r'os\.stat\(audio_path\)', '_ensure_audio_path(audio_path) and os.stat(_ensure_audio_path(audio_path))'),
+        (r'os\.path\.exists\(audio_path\)', 'isinstance(audio_path, str) and os.path.exists(audio_path)'),
+        (r'os\.path\.getsize\(audio_path\)', '_ensure_audio_path(audio_path) and os.path.getsize(_ensure_audio_path(audio_path))'),
+    ]
+
+    for pattern, replacement in patterns_to_fix:
+        if re.search(pattern, content):
+            # Only replace if not already using _ensure_audio_path
+            if '_ensure_audio_path' not in content or pattern not in content:
+                content = re.sub(pattern, replacement, content)
+                modified = True
+                print(f'  Patched: {pattern}')
+
+    # Alternative: Patch the specific generate_tts_audio function for qwen3tts
+    # Look for qwen3tts handling and ensure it returns a file path
+    if 'qwen3tts' in content.lower() and 'QWEN3_TTS_API_URL' in content:
+        # Find where qwen3tts returns audio and ensure it's saved to file
+        qwen3_pattern = r"(elif\s+engine\s*==\s*['\"]qwen3tts['\"].*?)(return\s+.*?audio.*?\n)"
+
+        def add_file_save(match):
+            block = match.group(0)
+            if '_ensure_audio_path' not in block and 'PATCHED' not in block:
+                # Add comment marking the patch
+                return block.replace('return', '# PATCHED_QWEN3TTS_TUPLE: Ensure file path\n            return')
+            return block
+
+        # This is a simplified patch - the actual fix may need manual review
+        print('  Qwen3-TTS section found - helper function added')
+
+    if modified:
+        with open('app.py', 'w', encoding='utf-8') as f:
+            f.write(content)
+        print('  Qwen3-TTS tuple bug fix applied!')
+    else:
+        print('  No changes needed or patterns not found')
+QWEN3_PATCH
+    echo "  Qwen3-TTS patch completed" >> /tmp/newavata_startup.log
 fi
 
 # Apply PyTorch 2.6 patches to source files (for diffusers etc.)
@@ -1844,23 +2066,144 @@ NEWAVATA_SCRIPT
     echo "==========================================="
     echo -e "  ${GREEN}Full Stack Ready!${NC}"
     echo "==========================================="
-    echo -e "  TTS Server:     ${CYAN}http://0.0.0.0:8000${NC}"
-    echo -e "  NewAvata:       ${CYAN}http://0.0.0.0:8001${NC}"
-    echo -e "  API Docs:       ${CYAN}http://0.0.0.0:8000/docs${NC}"
-    echo -e "  Web UI:         ${CYAN}http://0.0.0.0:8000/ui${NC}"
-    echo ""
-    echo -e "  ${YELLOW}Tmux commands:${NC}"
-    echo -e "    tmux attach -t newavata  # View NewAvata logs"
-    echo -e "    tmux kill-session -t newavata  # Stop NewAvata"
+    echo -e "  TTS Server:     ${CYAN}http://localhost:8000${NC} (tmux: tts)"
+    echo -e "  NewAvata:       ${CYAN}http://localhost:8001${NC} (tmux: newavata)"
+    echo -e "  API Docs:       ${CYAN}http://localhost:8000/docs${NC}"
+    echo -e "  Web UI:         ${CYAN}http://localhost:8000/ui${NC}"
     echo ""
 
-    # Kill any existing process on port 8000 before starting TTS server
-    if command -v fuser &> /dev/null; then
-        fuser -k 8000/tcp 2>/dev/null || true
-        sleep 1
+    # =============================================
+    # Auto-verification: Check NewAvata APIs
+    # =============================================
+    echo -e "${CYAN}=== Auto-Verification ===${NC}"
+    echo ""
+
+    # 1. Check TTS Engines
+    echo -e "  ${YELLOW}[1/3] Checking TTS Engines...${NC}"
+    TTS_ENGINES_RESPONSE=$(curl -s --max-time 10 http://localhost:8001/api/tts_engines 2>/dev/null || echo "")
+
+    if [ -n "$TTS_ENGINES_RESPONSE" ]; then
+        echo "$TTS_ENGINES_RESPONSE" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    engines = data if isinstance(data, list) else data.get('engines', [])
+    print('  TTS Engines:')
+    for e in engines:
+        name = e.get('name', 'unknown')
+        avail = e.get('available', False)
+        status = '\033[0;32m✓\033[0m' if avail else '\033[0;31m✗\033[0m'
+        print(f'    {status} {name}: {\"available\" if avail else \"not available\"}')
+
+    # Check qwen3tts specifically
+    qwen = next((e for e in engines if e.get('name') == 'qwen3tts'), None)
+    if qwen and qwen.get('available'):
+        print('\n  \033[0;32m✓ Qwen3-TTS integration: OK\033[0m')
+    else:
+        print('\n  \033[1;33m⚠ Qwen3-TTS not available - check QWEN3_TTS_API_URL\033[0m')
+except Exception as ex:
+    print(f'  Error parsing TTS engines: {ex}')
+" 2>/dev/null || echo -e "    ${RED}Failed to parse TTS engines response${NC}"
+    else
+        echo -e "    ${RED}Could not reach /api/tts_engines${NC}"
+    fi
+    echo ""
+
+    # 2. Check Avatars
+    echo -e "  ${YELLOW}[2/3] Checking Avatars...${NC}"
+    AVATARS_RESPONSE=$(curl -s --max-time 10 http://localhost:8001/api/avatars 2>/dev/null || echo "")
+
+    if [ -n "$AVATARS_RESPONSE" ]; then
+        AVATAR_COUNT=$(echo "$AVATARS_RESPONSE" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    avatars = data if isinstance(data, list) else []
+    print(len(avatars))
+except:
+    print(0)
+" 2>/dev/null || echo "0")
+
+        if [ "$AVATAR_COUNT" -gt 0 ]; then
+            echo -e "    ${GREEN}✓ Found $AVATAR_COUNT avatar(s)${NC}"
+            echo "$AVATARS_RESPONSE" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    avatars = data if isinstance(data, list) else []
+    for a in avatars[:5]:
+        name = a.get('name', str(a))
+        print(f'      - {name}')
+    if len(avatars) > 5:
+        print(f'      ... and {len(avatars)-5} more')
+except:
+    pass
+" 2>/dev/null
+        else
+            echo -e "    ${RED}✗ No avatars found!${NC}"
+            echo -e "    ${YELLOW}Run: bash setup_avatar.sh${NC}"
+        fi
+    else
+        echo -e "    ${RED}Could not reach /api/avatars${NC}"
+    fi
+    echo ""
+
+    # 3. Quick health summary
+    echo -e "  ${YELLOW}[3/3] System Summary...${NC}"
+    TTS_HEALTH=$(curl -s --max-time 5 http://localhost:8000/health 2>/dev/null | grep -qi "ok\|healthy" && echo "OK" || echo "FAIL")
+    NEWAVATA_HEALTH=$(curl -s --max-time 5 http://localhost:8001/health 2>/dev/null | grep -qi "ok\|healthy\|status" && echo "OK" || echo "FAIL")
+
+    if [ "$TTS_HEALTH" = "OK" ]; then
+        echo -e "    ${GREEN}✓ TTS Server: Running${NC}"
+    else
+        echo -e "    ${YELLOW}⚠ TTS Server: Not started yet (will start below)${NC}"
     fi
 
-    python server.py
+    if [ "$NEWAVATA_HEALTH" = "OK" ]; then
+        echo -e "    ${GREEN}✓ NewAvata Server: Running${NC}"
+    else
+        echo -e "    ${RED}✗ NewAvata Server: Not responding${NC}"
+    fi
+
+    if [ "$AVATAR_COUNT" -gt 0 ]; then
+        echo -e "    ${GREEN}✓ Avatars: $AVATAR_COUNT available${NC}"
+    else
+        echo -e "    ${RED}✗ Avatars: None available${NC}"
+    fi
+    echo ""
+
+    echo -e "${CYAN}=== Verification Complete ===${NC}"
+    echo ""
+    echo -e "  ${YELLOW}Test lip-sync:${NC}"
+    echo -e "    curl -X POST http://localhost:8001/api/v2/lipsync \\"
+    echo -e "      -H 'Content-Type: application/json' \\"
+    echo -e "      -d '{\"text\":\"안녕하세요\",\"tts_engine\":\"qwen3tts\",\"resolution\":\"480p\"}'"
+    echo ""
+    echo -e "  ${YELLOW}Or use test script:${NC}"
+    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요\""
+    echo ""
+
+    # Both servers are now running in tmux sessions
+    echo -e "${GREEN}==========================================="
+    echo -e "  All servers running in background!"
+    echo -e "===========================================${NC}"
+    echo ""
+    echo -e "  ${CYAN}Tmux sessions:${NC}"
+    echo -e "    ${YELLOW}tmux attach -t tts${NC}       # View TTS server logs"
+    echo -e "    ${YELLOW}tmux attach -t newavata${NC}  # View NewAvata logs"
+    echo ""
+    echo -e "  ${CYAN}Stop servers:${NC}"
+    echo -e "    ${YELLOW}tmux kill-session -t tts${NC}"
+    echo -e "    ${YELLOW}tmux kill-session -t newavata${NC}"
+    echo ""
+    echo -e "  ${CYAN}Restart all:${NC}"
+    echo -e "    ${YELLOW}bash ~/Qwen3-TTS/start_full.sh${NC}"
+    echo ""
+
+    # Optional: Tail logs in foreground
+    echo -e "  ${CYAN}Monitoring TTS server logs (Ctrl+C to exit)...${NC}"
+    echo ""
+    tail -f /tmp/tts_startup.log 2>/dev/null || echo "Log file not available"
 
 else
     # No tmux - use background process

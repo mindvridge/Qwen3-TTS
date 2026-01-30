@@ -10,9 +10,19 @@ import time
 import json
 import sys
 
-# Server URLs
-TTS_URL = "https://rhbwsfctehtfacax.tunnel.elice.io"
-NEWAVATA_URL = "https://nzgwjxtxppjpasfr.tunnel.elice.io"
+# Server URLs - Auto-detect local vs remote
+import os
+
+# Use environment variables if set, otherwise use defaults
+# For local testing on Elice server, set LOCAL=1 or use localhost URLs
+if os.environ.get('LOCAL') == '1' or os.path.exists('/home/elicer'):
+    # Running on Elice server - use localhost
+    TTS_URL = os.environ.get('TTS_URL', 'http://localhost:8000')
+    NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'http://localhost:8001')
+else:
+    # Remote access via tunnel
+    TTS_URL = os.environ.get('TTS_URL', 'https://rhbwsfctehtfacax.tunnel.elice.io')
+    NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'https://nzgwjxtxppjpasfr.tunnel.elice.io')
 
 
 def check_server_status():
@@ -63,11 +73,12 @@ def check_server_status():
         return False, []
 
 
-def test_lipsync_rest(text, avatar="auto"):
+def test_lipsync_rest(text, avatar="auto", tts_engine="qwen3tts"):
     """Test lip-sync using REST API"""
     print(f"\n=== Lip-sync REST API Test ===")
     print(f"Text: {text}")
     print(f"Avatar: {avatar}")
+    print(f"TTS Engine: {tts_engine}")
     print(f"Endpoint: {NEWAVATA_URL}/api/v2/lipsync")
     print("")
 
@@ -80,8 +91,8 @@ def test_lipsync_rest(text, avatar="auto"):
             json={
                 "text": text,
                 "avatar": avatar,
-                "tts_engine": "edge",  # Use edge TTS (built-in)
-                "resolution": "480p"   # Lower resolution for faster processing
+                "tts_engine": tts_engine,
+                "resolution": "480p"       # Lower resolution for faster processing
             },
             timeout=300  # 5 minutes timeout
         )
@@ -159,7 +170,12 @@ def test_lipsync_with_external_audio(text, avatar="auto"):
 
 
 def main():
-    text = sys.argv[1] if len(sys.argv) > 1 else "안녕하세요, 립싱크 테스트입니다."
+    import argparse
+    parser = argparse.ArgumentParser(description="Test NewAvata lip-sync REST API")
+    parser.add_argument("text", nargs="?", default="안녕하세요, 립싱크 테스트입니다.", help="Text to synthesize")
+    parser.add_argument("--tts", "-t", default="qwen3tts", choices=["qwen3tts", "edge", "elevenlabs"], help="TTS engine to use")
+    parser.add_argument("--avatar", "-a", default="auto", help="Avatar name or 'auto'")
+    args = parser.parse_args()
 
     # Check servers
     ok, avatars = check_server_status()
@@ -170,11 +186,13 @@ def main():
         print("="*50)
         return
 
-    # Use first avatar or 'auto'
-    avatar = avatars[0].get('name', 'auto') if avatars else 'auto'
+    # Use first avatar if 'auto' and avatars exist
+    avatar = args.avatar
+    if avatar == "auto" and avatars:
+        avatar = avatars[0].get('name', 'auto')
 
     # Test REST API
-    result = test_lipsync_rest(text, avatar)
+    result = test_lipsync_rest(args.text, avatar, args.tts)
 
     if result:
         print("\n" + "="*50)
