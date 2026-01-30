@@ -13,14 +13,31 @@ import sys
 # Server URLs - Auto-detect local vs remote
 import os
 
+def detect_newavata_url():
+    """Auto-detect NewAvata URL by trying multiple ports"""
+    # Check environment variable first
+    if os.environ.get('NEWAVATA_URL'):
+        return os.environ.get('NEWAVATA_URL')
+
+    # For local/Elice server, try ports 8001 and 5000
+    if os.environ.get('LOCAL') == '1' or os.path.exists('/home/elicer'):
+        for port in [8001, 5000]:
+            try:
+                r = requests.get(f'http://localhost:{port}/health', timeout=2)
+                if r.status_code == 200:
+                    return f'http://localhost:{port}'
+            except:
+                pass
+        return 'http://localhost:8001'  # Default fallback
+    else:
+        # Remote access via tunnel
+        return 'https://nzgwjxtxppjpasfr.tunnel.elice.io'
+
 # Use environment variables if set, otherwise use defaults
-# For local testing on Elice server, set LOCAL=1 or use localhost URLs
 if os.environ.get('LOCAL') == '1' or os.path.exists('/home/elicer'):
-    # Running on Elice server - use localhost
     TTS_URL = os.environ.get('TTS_URL', 'http://localhost:8000')
-    NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'http://localhost:8001')
+    NEWAVATA_URL = detect_newavata_url()
 else:
-    # Remote access via tunnel
     TTS_URL = os.environ.get('TTS_URL', 'https://rhbwsfctehtfacax.tunnel.elice.io')
     NEWAVATA_URL = os.environ.get('NEWAVATA_URL', 'https://nzgwjxtxppjpasfr.tunnel.elice.io')
 
