@@ -23,6 +23,25 @@ echo "  Qwen3-TTS + NewAvata Full Stack Setup"
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
 echo "==========================================="
 
+# =============================================
+# PRE-STEP: Stop existing servers and update code
+# =============================================
+echo -e "\n${CYAN}[Pre] Stopping existing servers...${NC}"
+
+# Kill existing tmux sessions
+if command -v tmux &> /dev/null; then
+    tmux kill-session -t tts 2>/dev/null && echo -e "  ${GREEN}Stopped TTS server${NC}" || true
+    tmux kill-session -t newavata 2>/dev/null && echo -e "  ${GREEN}Stopped NewAvata server${NC}" || true
+fi
+
+# Kill processes on ports
+if command -v fuser &> /dev/null; then
+    fuser -k 8000/tcp 2>/dev/null && echo -e "  ${GREEN}Freed port 8000${NC}" || true
+    fuser -k 8001/tcp 2>/dev/null && echo -e "  ${GREEN}Freed port 8001${NC}" || true
+fi
+
+sleep 2
+
 # Auto-update Qwen3-TTS from GitHub
 echo -e "\n${YELLOW}[0/7] Updating Qwen3-TTS...${NC}"
 cd "$SCRIPT_DIR"
@@ -2174,13 +2193,13 @@ except:
 
     echo -e "${CYAN}=== Verification Complete ===${NC}"
     echo ""
-    echo -e "  ${YELLOW}Test lip-sync:${NC}"
+    echo -e "  ${YELLOW}Test lip-sync (새 터미널에서):${NC}"
     echo -e "    curl -X POST http://localhost:8001/api/v2/lipsync \\"
     echo -e "      -H 'Content-Type: application/json' \\"
-    echo -e "      -d '{\"text\":\"안녕하세요\",\"tts_engine\":\"qwen3tts\",\"resolution\":\"480p\"}'"
+    echo -e "      -d '{\"text\":\"안녕하세요, 립싱크 테스트입니다.\",\"tts_engine\":\"qwen3tts\",\"avatar\":\"idle_long\",\"resolution\":\"480p\"}'"
     echo ""
     echo -e "  ${YELLOW}Or use test script:${NC}"
-    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요\""
+    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요, 립싱크 테스트입니다.\""
     echo ""
 
     # Both servers are now running in tmux sessions
