@@ -1746,15 +1746,37 @@ sleep 2
 if [ -f "app.py" ]; then
     echo "Patching app.py to use port 8001..." >> /tmp/newavata_startup.log
 
-    # Replace port 5000 with 8001 in the socketio.run line
-    if grep -q "port=5000" app.py; then
-        sed -i 's/port=5000/port=8001/g' app.py
-        echo "  Port changed to 8001" >> /tmp/newavata_startup.log
+    # More robust port patching - handle various formats
+    # Pattern 1: port=5000
+    sed -i 's/port=5000/port=8001/g' app.py 2>/dev/null
+    # Pattern 2: port = 5000 (with spaces)
+    sed -i 's/port\s*=\s*5000/port=8001/g' app.py 2>/dev/null
+    # Pattern 3: "port": 5000 (JSON style)
+    sed -i 's/"port":\s*5000/"port": 8001/g' app.py 2>/dev/null
+    # Pattern 4: PORT = 5000 (constant)
+    sed -i 's/PORT\s*=\s*5000/PORT = 8001/g' app.py 2>/dev/null
+    # Pattern 5: default_port = 5000
+    sed -i 's/default_port\s*=\s*5000/default_port = 8001/g' app.py 2>/dev/null
+    # Pattern 6: in socketio.run(..., port=5000)
+    sed -i "s/socketio\.run([^)]*port\s*=\s*5000/socketio.run(app, host='0.0.0.0', port=8001/g" app.py 2>/dev/null
+
+    # Also check and patch any config.py or settings
+    if [ -f "config.py" ]; then
+        sed -i 's/PORT\s*=\s*5000/PORT = 8001/g' config.py 2>/dev/null
+        sed -i 's/port\s*=\s*5000/port = 8001/g' config.py 2>/dev/null
+    fi
+
+    # Verify patch was applied
+    if grep -q "8001" app.py; then
+        echo "  Port patched to 8001" >> /tmp/newavata_startup.log
+    else
+        echo "  WARNING: Port patch may not have applied, adding override..." >> /tmp/newavata_startup.log
     fi
 
     echo "Starting app.py on port 8001..." >> /tmp/newavata_startup.log
     # Use -u for unbuffered output to see logs in real-time
-    python -u app.py 2>&1 | tee -a /tmp/newavata_startup.log
+    # Add PORT environment variable as fallback
+    PORT=8001 python -u app.py --port 8001 2>&1 | tee -a /tmp/newavata_startup.log
 else
     echo "ERROR: app.py not found!" >> /tmp/newavata_startup.log
     echo "Available files:" >> /tmp/newavata_startup.log
@@ -2254,7 +2276,18 @@ except:
     # 3. Quick health summary
     echo -e "  ${YELLOW}[3/3] System Summary...${NC}"
     TTS_HEALTH=$(curl -s --max-time 5 http://localhost:8000/health 2>/dev/null | grep -qi "ok\|healthy" && echo "OK" || echo "FAIL")
+
+    # Try port 8001 first, then fallback to port 5000
+    NEWAVATA_PORT=8001
     NEWAVATA_HEALTH=$(curl -s --max-time 5 http://localhost:8001/health 2>/dev/null | grep -qi "ok\|healthy\|status" && echo "OK" || echo "FAIL")
+    if [ "$NEWAVATA_HEALTH" != "OK" ]; then
+        # Try port 5000 as fallback
+        NEWAVATA_HEALTH=$(curl -s --max-time 5 http://localhost:5000/health 2>/dev/null | grep -qi "ok\|healthy\|status" && echo "OK" || echo "FAIL")
+        if [ "$NEWAVATA_HEALTH" = "OK" ]; then
+            NEWAVATA_PORT=5000
+            echo -e "    ${YELLOW}Note: NewAvata running on port 5000 (not 8001)${NC}"
+        fi
+    fi
 
     if [ "$TTS_HEALTH" = "OK" ]; then
         echo -e "    ${GREEN}✓ TTS Server: Running${NC}"
@@ -2263,9 +2296,9 @@ except:
     fi
 
     if [ "$NEWAVATA_HEALTH" = "OK" ]; then
-        echo -e "    ${GREEN}✓ NewAvata Server: Running${NC}"
+        echo -e "    ${GREEN}✓ NewAvata Server: Running (port $NEWAVATA_PORT)${NC}"
     else
-        echo -e "    ${RED}✗ NewAvata Server: Not responding${NC}"
+        echo -e "    ${RED}✗ NewAvata Server: Not responding (tried 8001 and 5000)${NC}"
     fi
 
     if [ "$AVATAR_COUNT" -gt 0 ]; then
@@ -2286,10 +2319,11 @@ except:
     if [ "$TTS_HEALTH" = "OK" ] && [ "$NEWAVATA_HEALTH" = "OK" ] && [ "$AVATAR_COUNT" -gt 0 ]; then
         echo -e "  ${YELLOW}[테스트] 립싱크 생성 중...${NC}"
         echo -e "  Text: 안녕하세요, 립싱크 테스트입니다."
+        echo -e "  Port: $NEWAVATA_PORT"
         echo ""
 
-        # Run lip-sync test with timeout
-        LIPSYNC_RESULT=$(curl -s --max-time 300 -X POST http://localhost:8001/api/v2/lipsync \
+        # Run lip-sync test with timeout (use detected port)
+        LIPSYNC_RESULT=$(curl -s --max-time 300 -X POST "http://localhost:${NEWAVATA_PORT}/api/v2/lipsync" \
             -H 'Content-Type: application/json' \
             -d '{"text":"안녕하세요, 립싱크 테스트입니다.","tts_engine":"qwen3tts","avatar":"auto","resolution":"480p"}' 2>/dev/null)
 
@@ -2297,7 +2331,7 @@ except:
             VIDEO_URL=$(echo "$LIPSYNC_RESULT" | grep -oP '"video_url"\s*:\s*"\K[^"]+' | head -1)
             echo -e "  ${GREEN}✓ 립싱크 테스트 성공!${NC}"
             if [ -n "$VIDEO_URL" ]; then
-                echo -e "  ${GREEN}  Video URL: http://localhost:8001${VIDEO_URL}${NC}"
+                echo -e "  ${GREEN}  Video URL: http://localhost:${NEWAVATA_PORT}${VIDEO_URL}${NC}"
             fi
             echo ""
         elif echo "$LIPSYNC_RESULT" | grep -qi "error\|fail"; then
@@ -2330,12 +2364,12 @@ except:
     fi
 
     echo -e "  ${YELLOW}수동 테스트 (새 터미널에서):${NC}"
-    echo -e "    curl -X POST http://localhost:8001/api/v2/lipsync \\"
+    echo -e "    curl -X POST http://localhost:${NEWAVATA_PORT:-8001}/api/v2/lipsync \\"
     echo -e "      -H 'Content-Type: application/json' \\"
     echo -e "      -d '{\"text\":\"안녕하세요\",\"tts_engine\":\"qwen3tts\",\"avatar\":\"auto\",\"resolution\":\"480p\"}'"
     echo ""
     echo -e "  ${YELLOW}테스트 스크립트 사용:${NC}"
-    echo -e "    cd ~/Qwen3-TTS && python test_lipsync_rest.py \"안녕하세요, 테스트입니다.\""
+    echo -e "    cd ~/Qwen3-TTS && NEWAVATA_URL=http://localhost:${NEWAVATA_PORT:-8001} python test_lipsync_rest.py \"안녕하세요\""
     echo ""
 
     # Both servers are now running in tmux sessions
