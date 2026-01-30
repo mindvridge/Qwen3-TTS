@@ -1142,14 +1142,52 @@ if [ -d "$PRECOMPUTED_DIR" ]; then
         echo -e "  ${GREEN}Avatar structure OK${NC}"
     fi
 
+    # Convert symlinks to actual files (NewAvata API doesn't follow symlinks properly)
+    echo -e "\n  ${CYAN}Checking for symlinks...${NC}"
+    SYMLINK_FIXED=0
+    for item in "$PRECOMPUTED_DIR"/*.pkl; do
+        if [ -L "$item" ]; then
+            target=$(readlink -f "$item" 2>/dev/null)
+            if [ -f "$target" ]; then
+                rm "$item"
+                cp "$target" "$item"
+                echo -e "    Converted symlink: ${CYAN}$(basename $item)${NC}"
+                SYMLINK_FIXED=$((SYMLINK_FIXED + 1))
+            fi
+        fi
+    done
+    if [ "$SYMLINK_FIXED" -gt 0 ]; then
+        echo -e "  ${GREEN}Converted $SYMLINK_FIXED symlink(s) to files${NC}"
+    fi
+
+    # Rename files to *_precomputed.pkl format (required by NewAvata API)
+    echo -e "\n  ${CYAN}Checking file naming convention...${NC}"
+    RENAMED_COUNT=0
+    for f in "$PRECOMPUTED_DIR"/*.pkl; do
+        if [ -f "$f" ]; then
+            fname=$(basename "$f")
+            # Skip if already has _precomputed suffix
+            if [[ "$fname" != *"_precomputed.pkl" ]]; then
+                name="${fname%.pkl}"
+                newname="${name}_precomputed.pkl"
+                mv "$f" "$PRECOMPUTED_DIR/$newname"
+                echo -e "    Renamed: ${CYAN}$fname${NC} -> ${GREEN}$newname${NC}"
+                RENAMED_COUNT=$((RENAMED_COUNT + 1))
+            fi
+        fi
+    done
+    if [ "$RENAMED_COUNT" -gt 0 ]; then
+        echo -e "  ${GREEN}Renamed $RENAMED_COUNT file(s) to *_precomputed.pkl format${NC}"
+    fi
+
     # Show actual file count
-    FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | wc -l)
-    echo -e "  ${CYAN}Actual .pkl files: $FILE_COUNT${NC}"
+    FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*_precomputed.pkl" -type f 2>/dev/null | wc -l)
+    echo -e "  ${CYAN}Actual *_precomputed.pkl files: $FILE_COUNT${NC}"
 fi
 
 # Final avatar count and TensorRT note
-# Use find to count only actual files (not directories or symlinks)
-AVATAR_FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type f 2>/dev/null | wc -l)
+# Use find to count only actual files with correct naming (not directories or symlinks)
+AVATAR_FILE_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*_precomputed.pkl" -type f 2>/dev/null | wc -l)
 AVATAR_SYMLINK_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type l 2>/dev/null | wc -l)
 AVATAR_DIR_COUNT=$(find "$PRECOMPUTED_DIR" -maxdepth 1 -name "*.pkl" -type d 2>/dev/null | wc -l)
 
@@ -1384,7 +1422,8 @@ if [ -f "app.py" ]; then
     fi
 
     echo "Starting app.py on port 8001..." >> /tmp/newavata_startup.log
-    python app.py 2>&1 | tee -a /tmp/newavata_startup.log
+    # Use -u for unbuffered output to see logs in real-time
+    python -u app.py 2>&1 | tee -a /tmp/newavata_startup.log
 else
     echo "ERROR: app.py not found!" >> /tmp/newavata_startup.log
     echo "Available files:" >> /tmp/newavata_startup.log
